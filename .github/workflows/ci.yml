@@ -1,0 +1,138 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # -----------------------------------------------------------------
+  # API — Django + Ninja (ativado no Dia 2, quando api/pyproject.toml nascer)
+  # -----------------------------------------------------------------
+  api:
+    name: api (ruff + pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check if api/ is scaffolded
+        id: scaffolded
+        run: |
+          if [ -f api/pyproject.toml ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::api/ ainda não foi scaffoldado (Dia 2). Pulando lint/tests."
+          fi
+
+      - name: Setup Python
+        if: steps.scaffolded.outputs.ready == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps
+        if: steps.scaffolded.outputs.ready == 'true'
+        working-directory: api
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Ruff
+        if: steps.scaffolded.outputs.ready == 'true'
+        working-directory: api
+        run: ruff check .
+
+      - name: Pytest
+        if: steps.scaffolded.outputs.ready == 'true'
+        working-directory: api
+        run: pytest -q
+
+  # -----------------------------------------------------------------
+  # Worker — Temporal (ativado no Dia 3)
+  # -----------------------------------------------------------------
+  worker:
+    name: worker (ruff + pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check if worker/ is scaffolded
+        id: scaffolded
+        run: |
+          if [ -f worker/pyproject.toml ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::worker/ ainda não foi scaffoldado (Dia 3). Pulando lint/tests."
+          fi
+
+      - name: Setup Python
+        if: steps.scaffolded.outputs.ready == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps
+        if: steps.scaffolded.outputs.ready == 'true'
+        working-directory: worker
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Ruff
+        if: steps.scaffolded.outputs.ready == 'true'
+        working-directory: worker
+        run: ruff check .
+
+      - name: Pytest
+        if: steps.scaffolded.outputs.ready == 'true'
+        working-directory: worker
+        run: pytest -q
+
+  # -----------------------------------------------------------------
+  # Web — Next.js (ativado no Dia 5)
+  # -----------------------------------------------------------------
+  web:
+    name: web (lint + typecheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check if web/ is scaffolded
+        id: scaffolded
+        run: |
+          if [ -f web/package.json ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::web/ ainda não foi scaffoldado (Dia 5). Pulando lint/typecheck."
+          fi
+
+      - name: Setup Node
+        if: steps.scaffolded.outputs.ready == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install deps
+        if: steps.scaffolded.outputs.ready == 'true'
+        working-directory: web
+        run: npm ci
+
+      - name: Lint
+        if: steps.scaffolded.outputs.ready == 'true'
+        working-directory: web
+        run: npm run lint
+
+      - name: Typecheck
+        if: steps.scaffolded.outputs.ready == 'true'
+        working-directory: web
+        run: npm run typecheck
