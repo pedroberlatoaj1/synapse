@@ -6,7 +6,7 @@
 
 **Produto:** Synapse — SRS para estudantes de alta performance
 **Case:** 10 dias (24/04 – 04/05/2026)
-**Última atualização:** 2026-04-24 — Dia 1 (Fundação) **100% concluído**. Monorepo estruturado, infra validada (`docker compose up -d` passa, Temporal UI em `localhost:8080`, dbs `synapse`/`temporal`/`temporal_visibility` criados), READMEs dos subprojetos populados, CI stub no lugar, repo publicado em `github.com/pedroberlatoaj1/synapse`.
+**Última atualização:** 2026-04-24 — Dia 1 (Fundação) **100% concluído e auditado**. Monorepo estruturado, infra validada (`docker compose up -d` passa, Temporal UI em `localhost:8080`, dbs `synapse`/`temporal`/`temporal_visibility` criados), READMEs dos subprojetos populados, CI stub no lugar, repo publicado em `github.com/pedroberlatoaj1/synapse`. Resquício final corrigido: `SRSRecomputeWorkflow` → `ReviewPersistenceWorkflow` em `docs/TECH_SPECS.md` e neste STATE. Standby para Dia 2 (Backend Core) em 2026-04-25.
 
 ---
 
@@ -48,7 +48,7 @@ _(nenhum — todos os itens concluídos)_
 
 ## ⬜ Pendente — próximos dias
 - Dia 2 (25/04): Django+Ninja skeleton, User model, JWT, CRUD Deck
-- Dia 3 (26/04): Card CRUD, SM-2 + testes, SRSRecomputeWorkflow
+- Dia 3 (26/04): Card CRUD, SM-2 + testes, ReviewPersistenceWorkflow
 - Dia 4 (27/04): OfflineSyncWorkflow, `/sync`, `/review/today`, `/stats/dashboard`, **suíte Insomnia/Postman validando `/sync` e `/review` (gate para Dia 5)**
 - Dia 5 (28/04): Next.js + auth + deck UI
 - Dia 6 (29/04): Sessão de revisão web + dashboard + LaTeX

@@ -125,7 +125,7 @@ GET    /stats/dashboard        → {streak, retention_rate, heatmap, due_tomorro
 |---|---|---|---|
 | 1 | **Qui 24/04** | Fundação | Repo, docker-compose (postgres+temporal), PRD+Specs no README |
 | 2 | **Sex 25/04** | Backend core | User+JWT, CRUD Deck, testes, OpenAPI em `/api/docs` |
-| 3 | **Sáb 26/04** | SRS engine | CRUD Card, SM-2 com testes, `POST /review` + `SRSRecomputeWorkflow` |
+| 3 | **Sáb 26/04** | SRS engine | CRUD Card, SM-2 com testes, `POST /review` + `ReviewPersistenceWorkflow` |
 | 4 | **Dom 27/04** | Sync backend + **gate contratual** | `POST /sync` + `OfflineSyncWorkflow`, `/review/today`, `/stats/dashboard`; **suíte Insomnia/Postman exercendo payloads canônicos de `/sync` e `/review` ponta-a-ponta (gate: se falhar, NÃO avança ao Dia 5)** |
 | 5 | **Seg 28/04** | Web MVP | Next.js + auth, listagem/CRUD de decks, sessão de revisão funcional |
 | 6 | **Ter 29/04** | Web polish | Dashboard com heatmap, LaTeX rendering, skeleton states |
