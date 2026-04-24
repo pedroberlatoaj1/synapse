@@ -1,0 +1,65 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: synapse_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-synapse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-synapse}
+      POSTGRES_DB: ${POSTGRES_DB:-synapse}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init-temporal-db.sh:/docker-entrypoint-initdb.d/init-temporal-db.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-synapse}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - synapse_net
+
+  temporal:
+    image: temporalio/auto-setup:1.24.2
+    container_name: synapse_temporal
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-synapse}
+      - POSTGRES_PWD=${POSTGRES_PASSWORD:-synapse}
+      - POSTGRES_SEEDS=postgres
+      - DBNAME=temporal
+      - VISIBILITY_DBNAME=temporal_visibility
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development.yaml
+    ports:
+      - "7233:7233"
+    volumes:
+      - ./infra/temporal:/etc/temporal/config/dynamicconfig:ro
+    networks:
+      - synapse_net
+
+  temporal-ui:
+    image: temporalio/ui:2.27.2
+    container_name: synapse_temporal_ui
+    restart: unless-stopped
+    depends_on:
+      - temporal
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000,http://localhost:3001
+    ports:
+      - "8080:8080"
+    networks:
+      - synapse_net
+
+volumes:
+  postgres_data:
+
+networks:
+  synapse_net:
+    driver: bridge
