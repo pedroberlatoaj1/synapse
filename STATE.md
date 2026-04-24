@@ -6,13 +6,13 @@
 
 **Produto:** Synapse — SRS para estudantes de alta performance
 **Case:** 10 dias (24/04 – 04/05/2026)
-**Última atualização:** 2026-04-24 — Dia 1 (Fundação) concluído. Monorepo estruturado, infra validada (`docker compose up -d` passa, Temporal UI em `localhost:8080`, dbs `synapse`/`temporal`/`temporal_visibility` criados), READMEs dos subprojetos populados, CI stub no lugar. Pronto para primeiro push ao GitHub.
+**Última atualização:** 2026-04-24 — Dia 1 (Fundação) **100% concluído**. Monorepo estruturado, infra validada (`docker compose up -d` passa, Temporal UI em `localhost:8080`, dbs `synapse`/`temporal`/`temporal_visibility` criados), READMEs dos subprojetos populados, CI stub no lugar, repo publicado em `github.com/pedroberlatoaj1/synapse`.
 
 ---
 
 ## 📍 Dia corrente: **Dia 1 — Fundação**
 
-### Status: ✅ concluído (pendente apenas push ao GitHub)
+### Status: ✅ concluído
 
 ### Objetivo do dia
 Subir infra (Postgres + Temporal + UI) e deixar o monorepo estruturado para receber os 3 clientes nos dias seguintes.
@@ -21,7 +21,7 @@ Subir infra (Postgres + Temporal + UI) e deixar o monorepo estruturado para rece
 - [x] `make up` sobe tudo; `make ps` mostra todos healthy
 - [x] http://localhost:8080 abre UI do Temporal (namespace `default` ativo)
 - [x] `make psql` conecta no db `synapse`
-- [ ] Repo commitado no GitHub *(pendente: criação do repo remoto + push)*
+- [x] Repo commitado no GitHub — `github.com/pedroberlatoaj1/synapse`, `main` tracking `origin/main`
 
 ---
 
@@ -38,12 +38,13 @@ Subir infra (Postgres + Temporal + UI) e deixar o monorepo estruturado para rece
 - [x] **Validado `make up` + Temporal UI** (`localhost:8080`) e Postgres multi-db
 - [x] Scaffolds `api/`, `worker/`, `web/`, `mobile/` com READMEs detalhados (responsabilidades, stack, layout planejado) — `e1fd047`
 - [x] `.github/workflows/ci.yml` stub (jobs api/worker/web gated pelo manifest de cada subprojeto; passam até scaffold existir) — `f1ce55f`
+- [x] Primeiro push ao GitHub — `github.com/pedroberlatoaj1/synapse`, 7 commits em `main`
 
 ## 🟡 Em andamento
-_(nada — aguardando push ao GitHub para encerrar o Dia 1)_
+_(nada — Dia 1 fechado, pronto para iniciar Dia 2 em 2026-04-25)_
 
 ## ⬜ Pendente — Dia 1
-- [ ] Primeiro push ao GitHub (criar repo remoto + `git push -u origin main`)
+_(nenhum — todos os itens concluídos)_
 
 ## ⬜ Pendente — próximos dias
 - Dia 2 (25/04): Django+Ninja skeleton, User model, JWT, CRUD Deck
