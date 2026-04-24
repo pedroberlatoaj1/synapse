@@ -6,42 +6,44 @@
 
 **Produto:** Synapse — SRS para estudantes de alta performance
 **Case:** 10 dias (24/04 – 04/05/2026)
-**Última atualização:** 2026-04-24 — **patch arquitetural pós-auditoria** (idempotência via Workflow ID, índices de `SyncEvent`/`Deck`, `/review` síncrono + `ReviewPersistenceWorkflow` async, LWW ordenado por `client_ts`, gate contratual antecipado ao Dia 4)
+**Última atualização:** 2026-04-24 — Dia 1 (Fundação) concluído. Monorepo estruturado, infra validada (`docker compose up -d` passa, Temporal UI em `localhost:8080`, dbs `synapse`/`temporal`/`temporal_visibility` criados), READMEs dos subprojetos populados, CI stub no lugar. Pronto para primeiro push ao GitHub.
 
 ---
 
 ## 📍 Dia corrente: **Dia 1 — Fundação**
 
-### Status: 🟡 em andamento
+### Status: ✅ concluído (pendente apenas push ao GitHub)
 
 ### Objetivo do dia
 Subir infra (Postgres + Temporal + UI) e deixar o monorepo estruturado para receber os 3 clientes nos dias seguintes.
 
 ### Acceptance criteria
-- `make up` sobe tudo; `make ps` mostra todos healthy
-- http://localhost:8080 abre UI do Temporal
-- `make psql` conecta no db `synapse`
-- Repo commitado no GitHub
+- [x] `make up` sobe tudo; `make ps` mostra todos healthy
+- [x] http://localhost:8080 abre UI do Temporal (namespace `default` ativo)
+- [x] `make psql` conecta no db `synapse`
+- [ ] Repo commitado no GitHub *(pendente: criação do repo remoto + push)*
 
 ---
 
 ## ✅ Feito (cumulativo)
-_(nada ainda — primeiro dia)_
+
+### Dia 1 — 2026-04-24
+- [x] Estrutura de pastas do monorepo e `.gitignore` — `95b3053`
+- [x] `README.md` raiz — `95b3053`
+- [x] `docs/PRD.md` e `docs/TECH_SPECS.md` — `2ee7d6e`
+- [x] Patch arquitetural pós-auditoria (idempotência via Workflow ID, índices `SyncEvent`/`Deck`, `/review` síncrono + `ReviewPersistenceWorkflow` async, LWW por `client_ts`, gate contratual Dia 4) — `0066d8a`
+- [x] `docker-compose.yml` + `infra/postgres/init-temporal-db.sh` + `infra/temporal/development.yaml` — `028eb64`
+- [x] `.env.example` e `.env` — `028eb64`
+- [x] `Makefile` (`up`, `down`, `ps`, `logs`, `psql`, ...) — `028eb64`
+- [x] **Validado `make up` + Temporal UI** (`localhost:8080`) e Postgres multi-db
+- [x] Scaffolds `api/`, `worker/`, `web/`, `mobile/` com READMEs detalhados (responsabilidades, stack, layout planejado) — `e1fd047`
+- [x] `.github/workflows/ci.yml` stub (jobs api/worker/web gated pelo manifest de cada subprojeto; passam até scaffold existir) — `f1ce55f`
 
 ## 🟡 Em andamento
-- Setup inicial do monorepo
+_(nada — aguardando push ao GitHub para encerrar o Dia 1)_
 
 ## ⬜ Pendente — Dia 1
-- [ ] Estrutura de pastas e `.gitignore`
-- [ ] `README.md` raiz
-- [ ] `docs/PRD.md` e `docs/TECH_SPECS.md`
-- [ ] `docker-compose.yml` + `infra/postgres/init-temporal-db.sh` + `infra/temporal/development.yaml`
-- [ ] `.env.example` e `.env`
-- [ ] `Makefile`
-- [ ] Validar `make up` + Temporal UI
-- [ ] Scaffolds `api/`, `worker/`, `web/`, `mobile/` com READMEs
-- [ ] `.github/workflows/ci.yml` stub
-- [ ] Primeiro push ao GitHub
+- [ ] Primeiro push ao GitHub (criar repo remoto + `git push -u origin main`)
 
 ## ⬜ Pendente — próximos dias
 - Dia 2 (25/04): Django+Ninja skeleton, User model, JWT, CRUD Deck
