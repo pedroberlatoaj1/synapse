@@ -6,7 +6,7 @@
 
 **Produto:** Synapse — SRS para estudantes de alta performance
 **Case:** 10 dias (24/04 – 04/05/2026)
-**Última atualização:** 2026-04-24 — início do Dia 1
+**Última atualização:** 2026-04-24 — **patch arquitetural pós-auditoria** (idempotência via Workflow ID, índices de `SyncEvent`/`Deck`, `/review` síncrono + `ReviewPersistenceWorkflow` async, LWW ordenado por `client_ts`, gate contratual antecipado ao Dia 4)
 
 ---
 
@@ -46,7 +46,7 @@ _(nada ainda — primeiro dia)_
 ## ⬜ Pendente — próximos dias
 - Dia 2 (25/04): Django+Ninja skeleton, User model, JWT, CRUD Deck
 - Dia 3 (26/04): Card CRUD, SM-2 + testes, SRSRecomputeWorkflow
-- Dia 4 (27/04): OfflineSyncWorkflow, `/sync`, `/review/today`, `/stats/dashboard`
+- Dia 4 (27/04): OfflineSyncWorkflow, `/sync`, `/review/today`, `/stats/dashboard`, **suíte Insomnia/Postman validando `/sync` e `/review` (gate para Dia 5)**
 - Dia 5 (28/04): Next.js + auth + deck UI
 - Dia 6 (29/04): Sessão de revisão web + dashboard + LaTeX
 - Dia 7 (30/04): Flutter bootstrap + auth + lista decks
@@ -60,18 +60,21 @@ _(nada ainda — primeiro dia)_
 ## 🏗 Arquitetura acordada (não mudar sem Tech Lead)
 - **Backend:** Django 5 + Django Ninja 1.x + Gunicorn + `django-ninja-jwt`
 - **DB:** Postgres 16 compartilhado — dbs separados: `synapse` (app), `temporal`, `temporal_visibility`
-- **Workflows:** Temporal 1.24+ em Docker; worker em Python SDK
+- **Workflows:** Temporal 1.24+ em Docker; worker em Python SDK. **Workflow IDs derivados de idempotency keys do cliente** para resistir a retries sem duplicação
 - **Web:** Next.js 14 (App Router) + Tailwind + shadcn/ui + TanStack Query; landing em `/`
 - **Mobile:** Flutter 3.x + Drift + Dio + Riverpod
 - **Monorepo:** `api/`, `worker/`, `web/`, `mobile/`, `infra/`, `docs/`
 - **Auth:** JWT Bearer, mesmo padrão em web e mobile
-- **SRS:** SM-2 no MVP, interface plugável (`SRSEngine.compute_next(card, rating)`)
+- **SRS:** SM-2 no MVP, interface plugável (`SRSEngine.compute_next(card, rating)`). **Execução síncrona em `POST /review` (<50ms)**; `ReviewPersistenceWorkflow` assíncrono só para log histórico + analytics (nunca no caminho crítico)
 
 ## 🔑 Decisões fixadas
 - Produto: **Synapse**
 - Landing: Hero + 3 seções + CTA (enxuta)
 - Offline: só create + review offline (update/delete apenas online)
-- Sync: last-write-wins com flag; sem UI de merge
+- **Sync — LWW ordenado:** conflitos resolvidos por `client_ts` (empate: `id` lexicográfico maior); serialização por `(user_id, entity_id)` via `pg_advisory_xact_lock`; sem UI de merge
+- **Idempotência:** `SyncEvent.id` é gerado pelo cliente (UUID v4/v7) e atua como idempotency key; servidor faz `INSERT ... ON CONFLICT (id) DO NOTHING`; Temporal `workflow_id = f"sync-event-{id}"`
+- **Contrato `/review`:** SM-2 roda SÍNCRONO dentro da request (<50ms); `ReviewPersistenceWorkflow` é disparado APÓS o commit para log/analytics (`workflow_id = review-persist-{review.id}`)
+- **Gate de validação contratual:** antes de avançar do Dia 4 para o Dia 5, suíte Insomnia/Postman tem que passar em `/sync` e `/review`
 
 ## 📦 Endpoints alvo (ver `docs/TECH_SPECS.md` §6 para contrato completo)
 `/auth/register` `/auth/login` `/auth/refresh`
