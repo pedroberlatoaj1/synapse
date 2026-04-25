@@ -6,7 +6,7 @@
 
 **Produto:** Synapse — SRS para estudantes de alta performance
 **Case:** 10 dias (24/04 – 04/05/2026)
-**Última atualização:** 2026-04-25 — Bloco 2 do Dia 2 fechado. Django 5.2 LTS (hotfix do alerta do Codex sobre 5.0/5.1 EOL), skeleton do projeto `synapse/` com settings split (`base`/`dev`/`test`/`prod`), 4 apps registrados (`accounts`, `decks`, `reviews`, `sync`), Custom User com `AbstractBaseUser + PermissionsMixin`, PK UUID e `email` único (USERNAME_FIELD=email). `manage.py check` limpo, `accounts.0001_initial` gerada, ruff limpo, pytest 5/5 (smoke + 4 do User). Próximo: Bloco 3 (JWT auth + CRUD Deck).
+**Última atualização:** 2026-04-25 — Bloco 3 do Dia 2 fechado. Hotfixes do audit do Bloco 2 aplicados: email case-insensitive (manager faz `.lower()` + `get_by_natural_key` iexact + `UniqueConstraint(Lower('email'))`), prod hardening (`SECURE_SSL_REDIRECT` e `SECURE_HSTS_SECONDS` configuráveis via env). Modelos do dia 3 in place: `Deck` (ArrayField tags), `Card` (SM-2 state + state enum), `Review` (rating enum + DESC index), `SyncEvent` (id client-supplied — idempotency contract; índices `(user, device_id, server_ts)` e `(user, status, server_ts)`). Test settings movido para Postgres (ArrayField/JSONB exigem). Migrations geradas (`accounts.0002`, `decks.0001`, `reviews.0001`, `sync.0001`). ruff limpo, pytest **25/25**. Próximo: Bloco 4 (JWT auth + endpoints CRUD Deck).
 
 ---
 
