@@ -1,0 +1,8 @@
+"""WSGI entrypoint for production servers (e.g. gunicorn)."""
+import os
+
+from django.core.wsgi import get_wsgi_application
+
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "synapse.settings.prod")
+
+application = get_wsgi_application()

@@ -6,7 +6,7 @@
 
 **Produto:** Synapse — SRS para estudantes de alta performance
 **Case:** 10 dias (24/04 – 04/05/2026)
-**Última atualização:** 2026-04-24 — Dia 1 (Fundação) **100% concluído e auditado**. Monorepo estruturado, infra validada (`docker compose up -d` passa, Temporal UI em `localhost:8080`, dbs `synapse`/`temporal`/`temporal_visibility` criados), READMEs dos subprojetos populados, CI stub no lugar, repo publicado em `github.com/pedroberlatoaj1/synapse`. Resquício final corrigido: `SRSRecomputeWorkflow` → `ReviewPersistenceWorkflow` em `docs/TECH_SPECS.md` e neste STATE. Standby para Dia 2 (Backend Core) em 2026-04-25.
+**Última atualização:** 2026-04-25 — Bloco 2 do Dia 2 fechado. Django 5.2 LTS (hotfix do alerta do Codex sobre 5.0/5.1 EOL), skeleton do projeto `synapse/` com settings split (`base`/`dev`/`test`/`prod`), 4 apps registrados (`accounts`, `decks`, `reviews`, `sync`), Custom User com `AbstractBaseUser + PermissionsMixin`, PK UUID e `email` único (USERNAME_FIELD=email). `manage.py check` limpo, `accounts.0001_initial` gerada, ruff limpo, pytest 5/5 (smoke + 4 do User). Próximo: Bloco 3 (JWT auth + CRUD Deck).
 
 ---
 

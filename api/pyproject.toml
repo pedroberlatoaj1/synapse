@@ -41,9 +41,7 @@ exclude = [".venv", "migrations", "**/migrations/*"]
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
-addopts = "-q"
+DJANGO_SETTINGS_MODULE = "synapse.settings.test"
+addopts = "-q --reuse-db"
 testpaths = ["tests", "apps"]
 python_files = ["test_*.py", "tests.py"]
-# Bloco 2 vai adicionar:
-#   DJANGO_SETTINGS_MODULE = "synapse.settings.test"
-#   addopts = "-q --reuse-db"
