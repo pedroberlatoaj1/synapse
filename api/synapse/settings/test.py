@@ -15,6 +15,11 @@ from .base import *  # noqa: F401,F403
 
 DEBUG = False
 
+# 32+ bytes — silences pyjwt's InsecureKeyLengthWarning during HS256
+# signing in auth tests. The dev .env's short placeholder is fine for
+# local runs but noisy in test output.
+SECRET_KEY = "test-only-secret-deterministic-key-for-hs256-pytest-runs"  # noqa: S105
+
 DATABASES = {
     "default": dj_database_url.config(
         default=os.environ.get(

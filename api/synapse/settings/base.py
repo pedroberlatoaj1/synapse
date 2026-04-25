@@ -1,6 +1,7 @@
 """Base settings shared across dev / test / prod."""
 from __future__ import annotations
 
+import datetime as _dt
 import os
 from pathlib import Path
 
@@ -29,6 +30,9 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    # Third-party
+    "ninja_extra",
+    "ninja_jwt",
     # Local apps
     "apps.accounts",
     "apps.decks",
@@ -94,3 +98,18 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# --- ninja-jwt ---
+# Lifetimes are env-driven so prod can shorten them without a code change.
+# Defaults match .env.example: 60-minute access, 7-day refresh.
+NINJA_JWT = {
+    "ACCESS_TOKEN_LIFETIME": _dt.timedelta(
+        minutes=int(os.environ.get("JWT_ACCESS_LIFETIME_MINUTES", "60")),
+    ),
+    "REFRESH_TOKEN_LIFETIME": _dt.timedelta(
+        days=int(os.environ.get("JWT_REFRESH_LIFETIME_DAYS", "7")),
+    ),
+    "AUTH_HEADER_TYPES": ("Bearer",),
+    "USER_ID_FIELD": "id",
+    "USER_ID_CLAIM": "user_id",
+}
