@@ -1,0 +1,34 @@
+# Local env
+.env.local
+
+# Virtualenv
+.venv/
+venv/
+env/
+
+# Python bytecode / packaging
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+
+# Test / lint caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Django
+*.sqlite3
+*.sqlite3-journal
+staticfiles/
+media/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
