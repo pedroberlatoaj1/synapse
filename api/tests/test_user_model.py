@@ -43,13 +43,22 @@ def test_email_is_normalized_to_lowercase():
     assert user.email == "mixed.case@example.com"
 
 
-@pytest.mark.django_db
-def test_email_uniqueness_is_case_insensitive():
+@pytest.mark.django_db(transaction=True)
+def test_email_uniqueness_is_case_insensitive_at_db_level():
+    """Bypass the manager and write a mixed-case email directly.
+
+    The manager lowercases inputs, which masks whether the *database* is
+    actually rejecting case-conflicting emails. This test exercises the
+    UniqueConstraint(Lower('email')) — the only line of defence if a
+    future raw SQL migration, admin shortcut, or bulk import skips the
+    manager.
+    """
     User = get_user_model()
     User.objects.create_user(email="dup@example.com", password="pw-12345!")
+    raw = User(email="DUP@EXAMPLE.COM")
+    raw.set_password("other-pw!")
     with pytest.raises(IntegrityError):
-        # Manager lowercases first, so this hits the existing row
-        User.objects.create_user(email="DUP@EXAMPLE.COM", password="pw-12345!")
+        raw.save()
 
 
 @pytest.mark.django_db

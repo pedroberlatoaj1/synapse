@@ -5,6 +5,7 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+from django.db.models import Q
 from django.utils import timezone as dj_timezone
 
 
@@ -40,6 +41,16 @@ class Review(models.Model):
         indexes = [
             # Heatmap and stats queries scan the user's reviews newest-first.
             models.Index(fields=["user", "-reviewed_at"], name="review_user_when_idx"),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(rating__in=ReviewRating.values),
+                name="review_rating_valid",
+            ),
+            models.CheckConstraint(
+                condition=Q(duration_ms__gte=0),
+                name="review_duration_ms_non_negative",
+            ),
         ]
 
     def __str__(self) -> str:

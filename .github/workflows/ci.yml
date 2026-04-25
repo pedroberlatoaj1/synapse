@@ -17,6 +17,27 @@ jobs:
   api:
     name: api (ruff + pytest)
     runs-on: ubuntu-latest
+
+    # Postgres is mandatory: tests exercise ArrayField, JSONB, advisory
+    # locks (Bloco 4), and CHECK constraints — none of which sqlite covers.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: synapse
+          POSTGRES_PASSWORD: synapse
+          POSTGRES_DB: synapse
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U synapse -d synapse"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      TEST_DATABASE_URL: postgres://synapse:synapse@localhost:5432/synapse
+
     steps:
       - uses: actions/checkout@v4
 

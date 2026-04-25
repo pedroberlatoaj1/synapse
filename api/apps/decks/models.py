@@ -6,6 +6,7 @@ import uuid
 from django.conf import settings
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
+from django.db.models import Q
 from django.utils import timezone as dj_timezone
 
 
@@ -69,6 +70,23 @@ class Card(models.Model):
         indexes = [
             # Daily session query: cards in deck X that are due today.
             models.Index(fields=["deck", "due_at"], name="card_deck_due_idx"),
+        ]
+        constraints = [
+            # Belt-and-suspenders: model-level choices reject bad values in
+            # Python, but a stray INSERT from psql or a future raw migration
+            # would slip past. CHECK enforces it at the DB.
+            models.CheckConstraint(
+                condition=Q(state__in=CardState.values),
+                name="card_state_valid",
+            ),
+            models.CheckConstraint(
+                condition=Q(interval_days__gte=0),
+                name="card_interval_days_non_negative",
+            ),
+            models.CheckConstraint(
+                condition=Q(repetitions__gte=0),
+                name="card_repetitions_non_negative",
+            ),
         ]
 
     def __str__(self) -> str:

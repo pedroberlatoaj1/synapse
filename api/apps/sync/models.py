@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from django.conf import settings
 from django.db import models
+from django.db.models import Q
 
 
 class SyncOp(models.TextChoices):
@@ -61,6 +62,16 @@ class SyncEvent(models.Model):
             models.Index(
                 fields=["user", "status", "server_ts"],
                 name="syncevent_user_status_idx",
+            ),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(op__in=SyncOp.values),
+                name="syncevent_op_valid",
+            ),
+            models.CheckConstraint(
+                condition=Q(status__in=SyncStatus.values),
+                name="syncevent_status_valid",
             ),
         ]
 

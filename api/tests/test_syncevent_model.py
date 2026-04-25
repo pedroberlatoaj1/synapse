@@ -77,3 +77,25 @@ def test_payload_is_jsonfield_round_trip(user):
 def test_required_indexes_registered():
     names = {idx.name for idx in SyncEvent._meta.indexes}
     assert {"syncevent_user_device_idx", "syncevent_user_status_idx"} <= names
+
+
+@pytest.mark.django_db(transaction=True)
+def test_save_without_id_raises_integrity_error(user):
+    """Without `default=`, the PK has no value when the client forgets it.
+
+    This guards the idempotency contract: callers MUST supply the UUID
+    so the server can do INSERT ... ON CONFLICT (id) DO NOTHING and
+    reuse it as the Temporal workflow_id (TECH_SPECS §4.1).
+    """
+    event = SyncEvent(
+        # id intentionally omitted
+        user=user,
+        device_id="device-abc",
+        entity_type="card",
+        entity_id=uuid.uuid4(),
+        op=SyncOp.CREATE,
+        payload={"front": "Q"},
+        client_ts=timezone.now(),
+    )
+    with pytest.raises(IntegrityError):
+        event.save()
