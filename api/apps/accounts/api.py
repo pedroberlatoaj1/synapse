@@ -8,6 +8,7 @@ namespace, so we keep type hints concrete here.
 from django.contrib.auth import authenticate, get_user_model
 from django.db import IntegrityError, transaction
 from ninja import Schema
+from ninja.responses import Status
 from ninja_extra import api_controller, http_post
 from ninja_jwt.controller import NinjaJWTDefaultController
 from ninja_jwt.tokens import RefreshToken
@@ -69,9 +70,9 @@ class AuthController(NinjaJWTDefaultController):
             with transaction.atomic():
                 user = User.objects.create_user(email=email, password=payload.password)
         except IntegrityError:
-            return 400, ErrorOut(detail="Email already registered")
+            return Status(400, ErrorOut(detail="Email already registered"))
 
-        return 201, _token_pair_for(user)
+        return Status(201, _token_pair_for(user))
 
     @http_post(
         "/login",
@@ -80,7 +81,7 @@ class AuthController(NinjaJWTDefaultController):
         auth=None,
     )
     def login(self, payload: LoginIn):
-        # Authenticate goes through our custom UserManager.get_by_natural_key,
+        # authenticate goes through our custom UserManager.get_by_natural_key,
         # which does a case-insensitive lookup, so "Bob@x.com" matches the
         # stored "bob@x.com".
         user = authenticate(
@@ -91,5 +92,5 @@ class AuthController(NinjaJWTDefaultController):
             },
         )
         if user is None or not user.is_active:
-            return 401, ErrorOut(detail="Invalid credentials")
-        return 200, _token_pair_for(user)
+            return Status(401, ErrorOut(detail="Invalid credentials"))
+        return Status(200, _token_pair_for(user))
