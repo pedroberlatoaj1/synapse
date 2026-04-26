@@ -8,6 +8,7 @@ from django.urls import path
 from ninja_extra import NinjaExtraAPI
 
 from apps.accounts.api import AuthController
+from apps.decks.api import router as decks_router
 
 api = NinjaExtraAPI(
     title="Synapse API",
@@ -16,6 +17,7 @@ api = NinjaExtraAPI(
     docs_url="/docs",
 )
 api.register_controllers(AuthController)
+api.add_router("/decks", decks_router)
 
 
 urlpatterns = [
