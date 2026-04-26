@@ -11,6 +11,7 @@ from apps.accounts.api import AuthController
 from apps.decks.api import router as decks_router
 from apps.decks.cards_api import router as cards_router
 from apps.reviews.api import router as reviews_router
+from apps.sync.api import router as sync_router
 
 api = NinjaExtraAPI(
     title="Synapse API",
@@ -22,6 +23,7 @@ api.register_controllers(AuthController)
 api.add_router("/decks", decks_router)
 api.add_router("/cards", cards_router)
 api.add_router("/reviews", reviews_router)
+api.add_router("/sync", sync_router)
 
 
 urlpatterns = [

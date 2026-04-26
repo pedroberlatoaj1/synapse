@@ -88,8 +88,10 @@ async def queue(
     qs = (
         Card.objects.filter(
             deck_id=deck_id,
-            deck__user=request.user,
+            user=request.user,
+            deck__deleted_at__isnull=True,
             due_at__lte=now,
+            deleted_at__isnull=True,
         )
         .order_by("due_at")
         .values("id", "deck_id", "front", "back", "state", "due_at")[:limit]
@@ -212,9 +214,13 @@ def _apply_review_tx(*, payload: ReviewIn, user_id: int) -> dict:
 
         # --- 3. Winner path: apply SM-2 + persist Review + finalize. -------
         # Lock the row before reading SM-2 fields. Two concurrent reviews
-        # on the same card now serialize at this point.
+        # on the same card now serialize at this point. Soft-deleted
+        # cards are invisible — reviewing a tombstone is meaningless.
         card = Card.objects.select_for_update().get(
-            id=payload.card_id, deck__user_id=user_id
+            id=payload.card_id,
+            user_id=user_id,
+            deck__deleted_at__isnull=True,
+            deleted_at__isnull=True,
         )
 
         prev_interval = card.interval_days

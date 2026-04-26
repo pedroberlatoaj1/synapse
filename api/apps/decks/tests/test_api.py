@@ -30,7 +30,7 @@ def make_token(user) -> str:
 
 @sync_to_async
 def deck_exists(deck_id) -> bool:
-    return Deck.objects.filter(id=deck_id).exists()
+    return Deck.objects.filter(id=deck_id, deleted_at__isnull=True).exists()
 
 
 @sync_to_async

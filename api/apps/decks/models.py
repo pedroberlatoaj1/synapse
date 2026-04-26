@@ -27,12 +27,26 @@ class Deck(models.Model):
     is_public = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    # Soft delete tombstone. NULL = alive; non-NULL = deleted at that
+    # instant. CRUD endpoints filter `deleted_at__isnull=True`; the sync
+    # pull endpoint deliberately includes tombstones so other devices
+    # can replicate the deletion locally.
+    deleted_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         indexes = [
             # Listing decks by owner is the hot read; avoid a full scan
             # on the user FK join.
             models.Index(fields=["user"], name="deck_user_idx"),
+            # Composite cursor for /sync/changes: rows ordered by
+            # (updated_at, id) within a user. Postgres can satisfy the
+            # cursor predicate
+            #   (updated_at > X) OR (updated_at = X AND id > Y)
+            # via a single index range scan when the ordering matches.
+            models.Index(
+                fields=["user", "updated_at", "id"],
+                name="deck_sync_cursor_idx",
+            ),
         ]
 
     def __str__(self) -> str:
@@ -49,6 +63,12 @@ class CardState(models.TextChoices):
 class Card(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     deck = models.ForeignKey(Deck, on_delete=models.CASCADE, related_name="cards")
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        null=True,
+        related_name="cards",
+    )
     front = models.TextField()
     back = models.TextField()
 
@@ -65,11 +85,20 @@ class Card(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    # Soft delete tombstone — see the matching field on Deck for rationale.
+    deleted_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         indexes = [
             # Daily session query: cards in deck X that are due today.
             models.Index(fields=["deck", "due_at"], name="card_deck_due_idx"),
+            # Composite cursor for /sync/changes. Card.user is denormalized
+            # from Deck.user so pull can scan a user's cards directly without
+            # a join+sort over all of their decks.
+            models.Index(
+                fields=["user", "updated_at", "id"],
+                name="card_sync_cursor_idx",
+            ),
         ]
         constraints = [
             # Belt-and-suspenders: model-level choices reject bad values in
@@ -91,3 +120,11 @@ class Card(models.Model):
 
     def __str__(self) -> str:
         return f"Card({self.id})"
+
+    def save(self, *args, **kwargs):
+        if self.user_id is None and self.deck_id is not None:
+            if getattr(self, "deck", None) is not None:
+                self.user_id = self.deck.user_id
+            else:
+                self.user_id = Deck.objects.only("user_id").get(id=self.deck_id).user_id
+        super().save(*args, **kwargs)

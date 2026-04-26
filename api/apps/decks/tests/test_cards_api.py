@@ -35,7 +35,7 @@ def make_token(user) -> str:
 
 @sync_to_async
 def card_exists(card_id) -> bool:
-    return Card.objects.filter(id=card_id).exists()
+    return Card.objects.filter(id=card_id, deleted_at__isnull=True).exists()
 
 
 @sync_to_async

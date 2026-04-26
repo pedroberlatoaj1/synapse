@@ -511,6 +511,76 @@ async def test_reusing_event_id_with_different_rating_returns_409(async_client):
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
+async def test_reusing_event_id_belonging_to_another_user_returns_409(async_client):
+    """Bob steals (or guesses) a client_event_id Alice already burned.
+    Server must refuse with 409 — and crucially never echo Alice's stored
+    response payload back to Bob (which would leak the original card id,
+    front, back, etc.)."""
+    alice = await make_user("alice@example.com")
+    bob = await make_user("bob@example.com")
+    alice_deck = await make_deck(alice)
+    alice_card = await make_card(
+        alice_deck,
+        front="Alice's secret card",
+        back="Alice's secret answer",
+        state="review",
+        ease_factor=2.5,
+        interval_days=10,
+        repetitions=3,
+        due_at=timezone.now() - timedelta(days=1),
+    )
+    bob_deck = await make_deck(bob)
+    bob_card = await make_card(
+        bob_deck,
+        state="review",
+        ease_factor=2.5,
+        interval_days=10,
+        repetitions=3,
+        due_at=timezone.now() - timedelta(days=1),
+    )
+    alice_token = await make_token(alice)
+    bob_token = await make_token(bob)
+
+    shared_event_id = str(uuid.uuid4())
+
+    # Alice burns the key first.
+    r1 = await async_client.post(
+        REVIEW_URL,
+        data=review_body(
+            alice_card.id, rating="good", client_event_id=shared_event_id
+        ),
+        content_type=JSON,
+        headers=bearer(alice_token),
+    )
+    assert r1.status_code == 200
+
+    # Bob attempts to reuse the same key, targeting his OWN card.
+    r2 = await async_client.post(
+        REVIEW_URL,
+        data=review_body(
+            bob_card.id, rating="good", client_event_id=shared_event_id
+        ),
+        content_type=JSON,
+        headers=bearer(bob_token),
+    )
+
+    assert r2.status_code == 409
+    body = r2.json()
+    # Generic error code only — never a card payload.
+    assert body == {"detail": "idempotency_key_reused"}
+    # Triple-check: Alice's card details must NOT appear in Bob's response.
+    payload_str = str(body)
+    assert "Alice's secret card" not in payload_str
+    assert str(alice_card.id) not in payload_str
+
+    # Bob's card stays untouched (his attempt was refused upstream).
+    bob_card_after = await get_card(bob_card.id)
+    assert bob_card_after.repetitions == 3
+    assert await count_reviews_for(bob_card.id) == 0
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
 async def test_distinct_event_ids_apply_independently(async_client):
     """Sanity check that idempotency dedupes on the KEY, not on payload
     similarity — two reviews of the same card with the same rating but

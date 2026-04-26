@@ -4,9 +4,15 @@ Multi-tenant isolation works in two hops: Card -> Deck -> User. Every
 query/update/delete joins through `deck__user=request.user`. A card that
 belongs to someone else's deck returns 404 (NOT 403) for the same
 enumeration-protection reason as decks.
+
+Soft delete (Bloco 10): DELETE flips ``deleted_at`` to NOW() instead
+of removing the row. Every read filters ``deleted_at__isnull=True`` so
+the CRUD surface never exposes tombstones — those flow through
+``GET /sync/changes``.
 """
 import uuid
 
+from django.utils import timezone
 from ninja import Router
 from ninja.pagination import paginate
 from ninja.responses import Status
@@ -31,14 +37,16 @@ def _card_out(card: Card) -> CardOut:
 
 @router.post("", response={201: CardOut, 404: dict})
 async def create_card(request, payload: CardCreate):
-    # Ownership check via the deck — filtering by user blocks creating a
-    # card inside someone else's deck. 404 (not 403) keeps deck-id space
-    # opaque to attackers.
-    if not await Deck.objects.filter(id=payload.deck_id, user=request.user).aexists():
+    # The deleted_at filter makes a soft-deleted deck reject new cards
+    # the same way a missing deck would — 404, no leak.
+    if not await Deck.objects.filter(
+        id=payload.deck_id, user=request.user, deleted_at__isnull=True
+    ).aexists():
         return Status(404, {"detail": "Deck not found"})
 
     card = await Card.objects.acreate(
         deck_id=payload.deck_id,
+        user=request.user,
         front=payload.front,
         back=payload.back,
     )
@@ -48,11 +56,13 @@ async def create_card(request, payload: CardCreate):
 @router.get("", response=list[CardOut])
 @paginate
 async def list_cards(request, deck_id: uuid.UUID):
-    # deck_id is required so the client always scopes to one deck. The
-    # deck__user filter makes a foreign deck_id yield an empty page
-    # rather than leaking that the deck exists.
     return (
-        Card.objects.filter(deck_id=deck_id, deck__user=request.user)
+        Card.objects.filter(
+            deck_id=deck_id,
+            user=request.user,
+            deck__deleted_at__isnull=True,
+            deleted_at__isnull=True,
+        )
         .order_by("-created_at")
         .values("id", "deck_id", "front", "back", "state", "due_at")
     )
@@ -62,14 +72,14 @@ async def list_cards(request, deck_id: uuid.UUID):
 async def update_card(request, card_id: uuid.UUID, payload: CardUpdate):
     try:
         card = await Card.objects.select_related("deck").aget(
-            id=card_id, deck__user=request.user
+            id=card_id,
+            user=request.user,
+            deck__deleted_at__isnull=True,
+            deleted_at__isnull=True,
         )
     except Card.DoesNotExist:
         return Status(404, {"detail": "Card not found"})
 
-    # exclude_unset drops fields the client didn't send; the None filter
-    # drops explicit nulls so PATCH {"front": null} is a no-op instead of
-    # crashing the NOT NULL TextField at the DB.
     update_data = {
         k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None
     }
@@ -85,9 +95,14 @@ async def update_card(request, card_id: uuid.UUID, payload: CardUpdate):
 
 @router.delete("/{card_id}", response={204: None, 404: dict})
 async def delete_card(request, card_id: uuid.UUID):
-    deleted, _ = await Card.objects.filter(
-        id=card_id, deck__user=request.user
-    ).adelete()
-    if deleted == 0:
+    # Soft delete via UPDATE — see Decks delete_deck for rationale.
+    now = timezone.now()
+    updated = await Card.objects.filter(
+        id=card_id,
+        user=request.user,
+        deck__deleted_at__isnull=True,
+        deleted_at__isnull=True,
+    ).aupdate(deleted_at=now, updated_at=now)
+    if updated == 0:
         return Status(404, {"detail": "Card not found"})
     return Status(204, None)
