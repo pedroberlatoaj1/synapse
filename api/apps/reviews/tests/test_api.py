@@ -1,10 +1,11 @@
-"""Reviews router — async queue + transactional review submission.
+"""Reviews router — async queue + transactional, idempotent submission.
 
 Uses ``transaction=True`` so the test runs against a real Postgres
 transaction (default test isolation wraps each test in a savepoint,
 which would silently swallow the ``select_for_update`` semantics the
 production code depends on).
 """
+import uuid
 from datetime import timedelta
 
 import pytest
@@ -15,6 +16,7 @@ from ninja_jwt.tokens import RefreshToken
 
 from apps.decks.models import Card, Deck
 from apps.reviews.models import Review
+from apps.sync.models import SyncEvent
 
 User = get_user_model()
 QUEUE_URL = "/api/reviews/queue"
@@ -61,8 +63,31 @@ def first_review_for(card_id):
     return Review.objects.filter(card_id=card_id).first()
 
 
+@sync_to_async
+def get_sync_event(event_id):
+    return SyncEvent.objects.get(id=event_id)
+
+
 def bearer(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
+
+
+def review_body(card_id, **overrides) -> dict:
+    """Build a POST /reviews body with sane defaults for the Bloco 9 fields.
+
+    Tests that need to drive specific idempotency behavior pass overrides
+    (notably ``client_event_id`` and ``rating``) explicitly.
+    """
+    body = {
+        "card_id": str(card_id),
+        "rating": "good",
+        "duration_ms": 4200,
+        "client_event_id": str(uuid.uuid4()),
+        "device_id": "test-device-1",
+        "client_ts": timezone.now().isoformat(),
+    }
+    body.update(overrides)
+    return body
 
 
 # === GET /queue ============================================================
@@ -86,7 +111,6 @@ async def test_queue_returns_due_cards_ordered_by_oldest_first(async_client):
     alice = await make_user("alice@example.com")
     deck = await make_deck(alice)
     now = timezone.now()
-    # Three due cards, varying ages.
     c_oldest = await make_card(deck, front="oldest", due_at=now - timedelta(days=5))
     c_mid = await make_card(deck, front="mid", due_at=now - timedelta(days=2))
     c_youngest = await make_card(deck, front="youngest", due_at=now - timedelta(hours=1))
@@ -153,7 +177,6 @@ async def test_queue_rejects_limit_above_max(async_client):
         f"{QUEUE_URL}?deck_id={deck.id}&limit=500", headers=bearer(token)
     )
 
-    # Pydantic validation rejects out-of-range; Ninja maps to 422.
     assert resp.status_code == 422
 
 
@@ -172,8 +195,6 @@ async def test_queue_of_other_users_deck_returns_empty(async_client):
         f"{QUEUE_URL}?deck_id={bobs_deck.id}", headers=bearer(alice_token)
     )
 
-    # Empty list, not 404 — same shape as "your deck has nothing due"
-    # so attackers can't time/shape-probe foreign deck ids.
     assert resp.status_code == 200
     assert resp.json() == []
 
@@ -201,11 +222,7 @@ async def test_submit_review_with_invalid_rating_returns_422(async_client):
 
     resp = await async_client.post(
         REVIEW_URL,
-        data={
-            "card_id": str(card.id),
-            "rating": "perfect",  # not in the SM-2 vocabulary
-            "duration_ms": 1500,
-        },
+        data=review_body(card.id, rating="perfect"),
         content_type=JSON,
         headers=bearer(token),
     )
@@ -223,11 +240,27 @@ async def test_submit_review_with_negative_duration_returns_422(async_client):
 
     resp = await async_client.post(
         REVIEW_URL,
-        data={
-            "card_id": str(card.id),
-            "rating": "good",
-            "duration_ms": -10,
-        },
+        data=review_body(card.id, duration_ms=-10),
+        content_type=JSON,
+        headers=bearer(token),
+    )
+
+    assert resp.status_code == 422
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_submit_review_missing_idempotency_fields_returns_422(async_client):
+    """The 3 Bloco 9 fields are required — old clients sending only
+    {card_id, rating, duration_ms} must be rejected, not silently accepted."""
+    alice = await make_user("alice@example.com")
+    deck = await make_deck(alice)
+    card = await make_card(deck)
+    token = await make_token(alice)
+
+    resp = await async_client.post(
+        REVIEW_URL,
+        data={"card_id": str(card.id), "rating": "good", "duration_ms": 100},
         content_type=JSON,
         headers=bearer(token),
     )
@@ -242,8 +275,6 @@ async def test_submit_review_with_negative_duration_returns_422(async_client):
 async def test_submit_good_review_updates_card_and_creates_review_row(async_client):
     alice = await make_user("alice@example.com")
     deck = await make_deck(alice)
-    # Mature card: state=review, ef=2.5, interval=10. A 'good' rating
-    # under SM-2 should produce interval = round(10 * 2.5) = 25 days.
     card = await make_card(
         deck,
         front="Capital of France",
@@ -259,11 +290,7 @@ async def test_submit_good_review_updates_card_and_creates_review_row(async_clie
 
     resp = await async_client.post(
         REVIEW_URL,
-        data={
-            "card_id": str(card.id),
-            "rating": "good",
-            "duration_ms": 4200,
-        },
+        data=review_body(card.id, rating="good", duration_ms=4200),
         content_type=JSON,
         headers=bearer(token),
     )
@@ -274,18 +301,15 @@ async def test_submit_good_review_updates_card_and_creates_review_row(async_clie
     assert body["state"] == "review"
     assert body["id"] == str(card.id)
 
-    # Card row was updated with the SM-2 transition.
     refreshed = await get_card(card.id)
     assert refreshed.state == "review"
     assert refreshed.interval_days == 25
     assert refreshed.repetitions == 4
     assert refreshed.ease_factor == pytest.approx(2.5)
-    # due_at is now + ~25 days; allow the test runtime as fuzz.
     expected_low = before + timedelta(days=25)
     expected_high = after + timedelta(days=25)
     assert expected_low <= refreshed.due_at <= expected_high
 
-    # Review log row was created with the transition snapshot.
     assert await count_reviews_for(card.id) == 1
     review = await first_review_for(card.id)
     assert review.rating == "good"
@@ -311,11 +335,7 @@ async def test_submit_again_review_lapses_a_review_card(async_client):
 
     resp = await async_client.post(
         REVIEW_URL,
-        data={
-            "card_id": str(card.id),
-            "rating": "again",
-            "duration_ms": 8000,
-        },
+        data=review_body(card.id, rating="again", duration_ms=8000),
         content_type=JSON,
         headers=bearer(token),
     )
@@ -325,7 +345,6 @@ async def test_submit_again_review_lapses_a_review_card(async_client):
     assert refreshed.state == "lapsed"
     assert refreshed.interval_days == 0
     assert refreshed.repetitions == 0
-    # ease_factor was reduced (2.0 * 0.85 = 1.70, still above the 1.30 floor).
     assert refreshed.ease_factor == pytest.approx(1.70)
 
 
@@ -348,21 +367,15 @@ async def test_submit_review_for_other_users_card_returns_404(async_client):
 
     resp = await async_client.post(
         REVIEW_URL,
-        data={
-            "card_id": str(bobs_card.id),
-            "rating": "good",
-            "duration_ms": 1000,
-        },
+        data=review_body(bobs_card.id, rating="good", duration_ms=1000),
         content_type=JSON,
         headers=bearer(alice_token),
     )
 
     assert resp.status_code == 404
-    # Bob's card must remain untouched.
     refreshed = await get_card(bobs_card.id)
     assert refreshed.interval_days == 10
     assert refreshed.repetitions == 3
-    # And no Review row should exist for it.
     assert await count_reviews_for(bobs_card.id) == 0
 
 
@@ -374,13 +387,164 @@ async def test_submit_review_for_nonexistent_card_returns_404(async_client):
 
     resp = await async_client.post(
         REVIEW_URL,
-        data={
-            "card_id": "00000000-0000-0000-0000-000000000000",
-            "rating": "good",
-            "duration_ms": 1000,
-        },
+        data=review_body("00000000-0000-0000-0000-000000000000"),
         content_type=JSON,
         headers=bearer(token),
     )
 
     assert resp.status_code == 404
+
+
+# === Bloco 9: idempotency contract =========================================
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_idempotent_replay_returns_same_response_and_mutates_card_once(
+    async_client,
+):
+    """Same client_event_id submitted twice -> 200 both, identical body,
+    Card mutated exactly once, Review row inserted exactly once, and the
+    SyncEvent envelope holds both the request and the result."""
+    alice = await make_user("alice@example.com")
+    deck = await make_deck(alice)
+    card = await make_card(
+        deck,
+        state="review",
+        ease_factor=2.5,
+        interval_days=10,
+        repetitions=3,
+        due_at=timezone.now() - timedelta(days=1),
+    )
+    token = await make_token(alice)
+
+    # Build the body ONCE so client_event_id and client_ts are identical
+    # across both calls — that's exactly what an HTTP retry on a flaky
+    # 4G connection looks like.
+    body = review_body(card.id, rating="good", duration_ms=4200)
+
+    r1 = await async_client.post(
+        REVIEW_URL, data=body, content_type=JSON, headers=bearer(token)
+    )
+    r2 = await async_client.post(
+        REVIEW_URL, data=body, content_type=JSON, headers=bearer(token)
+    )
+
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    # Byte-identical replay: the second response is the saved snapshot,
+    # not a fresh computation. due_at, repetitions, etc. all match.
+    assert r1.json() == r2.json()
+
+    # Card was mutated once: 10 -> 25 (good), not 10 -> 25 -> 62.
+    refreshed = await get_card(card.id)
+    assert refreshed.interval_days == 25
+    assert refreshed.repetitions == 4
+
+    # Exactly one Review row, not two.
+    assert await count_reviews_for(card.id) == 1
+
+    # SyncEvent stored both halves of the envelope.
+    event = await get_sync_event(body["client_event_id"])
+    assert event.status == "applied"
+    assert event.payload["request"]["rating"] == "good"
+    assert event.payload["result"]["state"] == "review"
+    assert event.payload["result"]["id"] == str(card.id)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_reusing_event_id_with_different_rating_returns_409(async_client):
+    """Same client_event_id but a different rating -> 409, and the card
+    keeps the state from the original (winning) call."""
+    alice = await make_user("alice@example.com")
+    deck = await make_deck(alice)
+    card = await make_card(
+        deck,
+        state="review",
+        ease_factor=2.5,
+        interval_days=10,
+        repetitions=3,
+        due_at=timezone.now() - timedelta(days=1),
+    )
+    token = await make_token(alice)
+
+    shared_event_id = str(uuid.uuid4())
+    shared_ts = timezone.now().isoformat()
+
+    r1 = await async_client.post(
+        REVIEW_URL,
+        data=review_body(
+            card.id,
+            rating="good",
+            duration_ms=4200,
+            client_event_id=shared_event_id,
+            client_ts=shared_ts,
+        ),
+        content_type=JSON,
+        headers=bearer(token),
+    )
+    assert r1.status_code == 200
+
+    r2 = await async_client.post(
+        REVIEW_URL,
+        data=review_body(
+            card.id,
+            rating="again",  # different from r1's "good"
+            duration_ms=4200,
+            client_event_id=shared_event_id,  # but same key
+            client_ts=shared_ts,
+        ),
+        content_type=JSON,
+        headers=bearer(token),
+    )
+    assert r2.status_code == 409
+    assert r2.json()["detail"] == "idempotency_key_reused"
+
+    # Card kept the 'good' outcome — 'again' was REFUSED, not applied.
+    refreshed = await get_card(card.id)
+    assert refreshed.state == "review"
+    assert refreshed.interval_days == 25
+    assert refreshed.repetitions == 4
+    # Only the original Review row exists.
+    assert await count_reviews_for(card.id) == 1
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_distinct_event_ids_apply_independently(async_client):
+    """Sanity check that idempotency dedupes on the KEY, not on payload
+    similarity — two reviews of the same card with the same rating but
+    different client_event_ids must both apply."""
+    alice = await make_user("alice@example.com")
+    deck = await make_deck(alice)
+    card = await make_card(
+        deck,
+        state="review",
+        ease_factor=2.5,
+        interval_days=10,
+        repetitions=3,
+        due_at=timezone.now() - timedelta(days=1),
+    )
+    token = await make_token(alice)
+
+    r1 = await async_client.post(
+        REVIEW_URL,
+        data=review_body(card.id, rating="good"),
+        content_type=JSON,
+        headers=bearer(token),
+    )
+    r2 = await async_client.post(
+        REVIEW_URL,
+        data=review_body(card.id, rating="good"),
+        content_type=JSON,
+        headers=bearer(token),
+    )
+
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    # Two distinct rating events => SM-2 ran twice, two Review rows.
+    assert await count_reviews_for(card.id) == 2
+    refreshed = await get_card(card.id)
+    # repetitions: 3 -> 4 -> 5, interval: 10 -> 25 -> 62 (round(25*2.5)).
+    assert refreshed.repetitions == 5
+    assert refreshed.interval_days == 62
