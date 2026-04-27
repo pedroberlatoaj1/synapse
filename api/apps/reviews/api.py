@@ -238,6 +238,13 @@ def _apply_review_tx(*, payload: ReviewIn, user_id: int) -> dict:
         card.interval_days = next_state["interval_days"]
         card.repetitions = next_state["repetitions"]
         card.due_at = new_due_at
+        # Stamp the LWW signature so the next sync push sees this client
+        # event as the "current" baseline. Online POST /reviews is the
+        # authoritative source-of-truth for the moment it happens, so
+        # we don't run the LWW comparison here — the sync push wrapper
+        # does that for replayed offline events before delegating.
+        card.last_client_ts = payload.client_ts
+        card.last_event_id = payload.client_event_id
         card.save(
             update_fields=[
                 "state",
@@ -246,6 +253,8 @@ def _apply_review_tx(*, payload: ReviewIn, user_id: int) -> dict:
                 "repetitions",
                 "due_at",
                 "updated_at",
+                "last_client_ts",
+                "last_event_id",
             ]
         )
 

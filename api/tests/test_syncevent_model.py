@@ -49,7 +49,7 @@ def test_status_defaults_to_pending(user):
 
 @pytest.mark.django_db
 def test_op_choices_match_spec():
-    assert {c.value for c in SyncOp} == {"create", "update", "review"}
+    assert {c.value for c in SyncOp} == {"create", "update", "delete", "review"}
 
 
 @pytest.mark.django_db

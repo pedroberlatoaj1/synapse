@@ -32,6 +32,13 @@ class Deck(models.Model):
     # pull endpoint deliberately includes tombstones so other devices
     # can replicate the deletion locally.
     deleted_at = models.DateTimeField(null=True, blank=True)
+    # LWW (Bloco 11) signature of the last client mutation. Compared
+    # lexicographically as the tuple (last_client_ts, last_event_id) on
+    # every push event so the older edit always loses to the newer one,
+    # with the event UUID as a deterministic tiebreaker. NULL on rows
+    # never touched by a sync event (created via online CRUD only).
+    last_client_ts = models.DateTimeField(null=True, blank=True)
+    last_event_id = models.UUIDField(null=True, blank=True)
 
     class Meta:
         indexes = [
@@ -87,6 +94,9 @@ class Card(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     # Soft delete tombstone — see the matching field on Deck for rationale.
     deleted_at = models.DateTimeField(null=True, blank=True)
+    # LWW signature — see the matching fields on Deck.
+    last_client_ts = models.DateTimeField(null=True, blank=True)
+    last_event_id = models.UUIDField(null=True, blank=True)
 
     class Meta:
         indexes = [

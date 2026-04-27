@@ -16,6 +16,7 @@ from django.db.models import Q
 class SyncOp(models.TextChoices):
     CREATE = "create", "Create"
     UPDATE = "update", "Update"
+    DELETE = "delete", "Delete"
     REVIEW = "review", "Review"
 
 
