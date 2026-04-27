@@ -1,4 +1,4 @@
-"""Reviews router — async queue + idempotent transactional review submission.
+"""Reviews router — async queue + idempotent, LWW-checked review submission.
 
 The two endpoints have very different concurrency profiles:
 
@@ -6,45 +6,59 @@ The two endpoints have very different concurrency profiles:
   cards. Single SELECT, no lock, no transaction — runs natively async.
 
 * ``POST /reviews`` mutates two tables (Card update + Review insert)
-  and must be both atomic AND idempotent. Django 5.2's
-  ``transaction.atomic`` is still a sync context manager bound to the
-  current thread's DB connection, so we cannot open it from inside
-  ``async def`` without risking the block running on a thread that
-  doesn't own the connection. The fix: pack the whole transactional
-  sequence into a sync helper (``_apply_review_tx``) and dispatch it
-  via ``sync_to_async(..., thread_sensitive=True)`` — that pins the
-  work to the request's thread, keeps the atomic block coherent, and
-  makes the lock and the rows it covers move together.
+  under three coordinated guarantees: idempotency on retry, LWW on
+  out-of-order replay, and atomicity of the SM-2 + Review row write.
+  Django 5.2's ``transaction.atomic`` is still a sync context manager
+  bound to the current thread's DB connection, so we cannot open it
+  from inside ``async def`` without risking the block running on a
+  thread that doesn't own the connection. The fix: pack the whole
+  transactional sequence into ``_apply_review_tx`` and dispatch it via
+  ``sync_to_async(..., thread_sensitive=True)`` — that pins the work
+  to the request's thread, keeps the atomic block coherent, and makes
+  the lock and the rows it covers move together.
 
-Bloco 9 — strict idempotency
-----------------------------
-Every POST /reviews carries a client-generated ``client_event_id``
-(UUID v4/v7). The server uses it as the primary key of a
-``SyncEvent`` row and treats that row as the authoritative dedupe
-record:
+Single-transaction guarantee (Bloco 11 P0 fix)
+----------------------------------------------
+Every review now runs ALL of these inside one ``transaction.atomic()``:
 
-1. We try a single raw INSERT ... ON CONFLICT (id) DO NOTHING
-   RETURNING id. The PK conflict path is atomic at the storage layer
-   — two concurrent retries cannot both win.
-2. If the INSERT returned an id we are the *winner*: run the SM-2
-   transaction normally, then update the SyncEvent's payload with the
-   computed ``CardOut`` snapshot so future retries can replay it.
-3. If the INSERT returned no row we are the *loser*: another request
-   already claimed the key. We re-read the SyncEvent under
-   ``SELECT ... FOR UPDATE`` so we wait for the winner's transaction
-   to commit (otherwise we'd see a half-written envelope), then:
-   - if the saved request matches ours, return the saved result
-     (transparent retry replay);
-   - if it differs, raise ``IdempotencyKeyReused`` -> 409 (the same
-     key was reused with a different payload, which is a client bug
-     or replay attack — never silently overwrite).
+1. Acquire ``pg_advisory_xact_lock`` on ``(user_id, card_id)`` so two
+   concurrent reviewers (online retry, offline replay, two devices)
+   serialize at this one point. The lock is released on commit/rollback.
+2. ``INSERT ... ON CONFLICT (id) DO NOTHING`` against ``sync_syncevent``
+   to claim the idempotency key, with the row stamped ``status='pending'``
+   until we know the outcome.
+3. ``select_for_update`` the Card.
+4. Compare ``(payload.client_ts, payload.client_event_id)`` against
+   ``(card.last_client_ts, card.last_event_id)``. If the incoming pair
+   is not strictly newer, persist the SyncEvent as ``status='conflict'``
+   with the server_state and return the conflict tuple — retries replay
+   that conflict instead of re-running the math.
+5. If LWW wins: apply SM-2, write the Review row, stamp the Card with
+   the new LWW signature, and persist the SyncEvent as ``status='applied'``
+   with the response snapshot so future retries get a byte-identical
+   replay.
 
-Why ``select_for_update`` on the Card stays inside the winner path:
-two devices of the same user replaying offline reviews can submit
-ratings for *different* cards using the same card's id. Without a row
-lock on Card, both reads see the same ``state`` and write back
-conflicting next-states. FOR UPDATE serializes them at the Postgres
-level so each rating is applied to the freshest state.
+Previous design held the lock + ran LWW in one transaction, then
+released the lock and called a second transaction to apply SM-2 — a
+classic TOCTOU window where a competing writer could interleave between
+the two. The audit caught this and rolled it into the consolidation
+above.
+
+SyncEvent state machine (Bloco 11 P1 fix)
+------------------------------------------
+* ``pending`` — transient state inside the active transaction; never
+  observed post-commit (the same transaction always flips it to
+  ``applied`` or ``conflict`` before commit).
+* ``applied`` — SM-2 ran, Card mutated, Review row inserted.
+  ``payload.result`` carries the response snapshot.
+* ``conflict`` — LWW rejected the event. ``payload.conflict`` carries
+  ``{reason, server_state}``.
+
+On retry, the loser path takes ``SELECT FOR UPDATE`` on the existing
+SyncEvent (which blocks until the original transaction commits), checks
+the saved request matches the incoming one (otherwise: 409, never
+overwrite), then replays the saved outcome — accepted or conflict
+exactly as the original call returned.
 """
 from __future__ import annotations
 
@@ -64,6 +78,7 @@ from apps.decks.schemas import CardOut
 from apps.reviews.models import Review
 from apps.reviews.schemas import ReviewIn
 from apps.reviews.sm2 import calculate_next_state
+from apps.sync.lww import lww_loses, serialize_card_state
 from apps.sync.models import SyncEvent
 
 router = Router(auth=AsyncJWTAuth(), tags=["Reviews"])
@@ -103,11 +118,8 @@ async def queue(
 
 
 class IdempotencyKeyReused(Exception):
-    """Raised when a client_event_id is reused with a different request.
-
-    Maps to HTTP 409 in the async handler. We never overwrite the
-    original outcome — refusing the second call is the only safe move
-    if the bodies disagree.
+    """Raised when a client_event_id is reused with a different request,
+    or when the id was burned by another user. Maps to HTTP 409.
     """
 
 
@@ -140,23 +152,42 @@ def _serialize_card_out(card: Card) -> dict:
     }
 
 
-def _apply_review_tx(*, payload: ReviewIn, user_id: int) -> dict:
-    """Sync transactional core of POST /reviews — idempotent via SyncEvent.
+def _apply_review_tx(*, payload: ReviewIn, user_id: int) -> tuple[str, dict]:
+    """Sync, transactional, idempotent, LWW-checked review submission.
 
-    See module docstring for the full idempotency contract. Raises
-    ``Card.DoesNotExist`` (winner path) for missing/foreign card, and
-    ``IdempotencyKeyReused`` (loser path) for replay-with-different-body.
+    Returns one of:
+        ``("accepted", card_out_dict)``
+            SM-2 applied, Card mutated, Review row inserted, SyncEvent
+            finalized with status=applied. The dict is a CardOut snapshot.
+        ``("conflict", details_dict)``
+            LWW rejected the event as stale. SyncEvent finalized with
+            status=conflict and the same details. ``details_dict`` carries
+            ``{"reason": "stale_event", "server_state": {...card snapshot...}}``.
+
+    Raises:
+        Card.DoesNotExist — card missing or owned by another user.
+            The whole transaction (including the SyncEvent INSERT) rolls
+            back so retries re-run the lookup, not a stale replay.
+        IdempotencyKeyReused — same client_event_id seen with a different
+            request body, OR the key is owned by another user.
     """
     request_snapshot = _serialize_request(payload)
-    initial_envelope = {"request": request_snapshot, "result": None}
+    initial_envelope = {"request": request_snapshot, "result": None, "conflict": None}
 
     with transaction.atomic():
-        # --- 1. Atomic dedupe via raw SQL on the PK. -----------------------
-        # Using a raw cursor instead of ORM .create() because Django's
-        # bulk_create + ignore_conflicts won't return whether THIS row
-        # was the inserted one, and we need that signal to branch. The
-        # PK conflict path is fully atomic at storage level — two
-        # concurrent retries cannot both come out as winners.
+        # 1. Advisory lock on (user, card) — serializes every path that
+        # could mutate this card across both /reviews and /sync push.
+        # Held for the lifetime of this transaction; released on commit.
+        with connection.cursor() as cur:
+            cur.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                [f"{user_id}:{payload.card_id}"],
+            )
+
+        # 2. Atomic dedupe via PK conflict. The row goes in as 'pending'
+        # so a crash between INSERT and the final UPDATE leaves no
+        # half-applied state visible to retries (the transaction would
+        # have rolled back anyway).
         with connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -182,12 +213,10 @@ def _apply_review_tx(*, payload: ReviewIn, user_id: int) -> dict:
             inserted = cursor.fetchone()
 
         if inserted is None:
-            # --- 2. Loser path: row already existed. -----------------------
-            # SELECT FOR UPDATE blocks until the winner's tx commits, so
-            # we never read a half-applied envelope. Filtering by user_id
-            # keeps the dedupe space scoped — a stolen key from another
-            # user surfaces as a conflict rather than leaking that the id
-            # was used elsewhere.
+            # --- Replay path: a previous request already claimed the key. -
+            # SELECT FOR UPDATE blocks until the original tx commits, so
+            # status is always terminal (applied|conflict) by the time we
+            # read it. user_id scoping keeps the dedupe space per-tenant.
             try:
                 existing = SyncEvent.objects.select_for_update().get(
                     id=payload.client_event_id, user_id=user_id
@@ -195,26 +224,30 @@ def _apply_review_tx(*, payload: ReviewIn, user_id: int) -> dict:
             except SyncEvent.DoesNotExist as exc:
                 raise IdempotencyKeyReused() from exc
 
-            stored_envelope = existing.payload or {}
-            if stored_envelope.get("request") != request_snapshot:
-                # Same key, different body: never overwrite. The original
-                # outcome is the only safe answer; force the client to
-                # pick a new key.
+            stored = existing.payload or {}
+            if stored.get("request") != request_snapshot:
+                # Same key, different body: never overwrite the original
+                # outcome. Force the client onto a new key.
                 raise IdempotencyKeyReused()
 
-            stored_result = stored_envelope.get("result")
-            if stored_result is None:
-                # Defensive: post-commit the result is always populated;
-                # a None here means we lost a race against a winner that
-                # rolled back (e.g. Card.DoesNotExist). Treating it as a
-                # conflict is safer than re-running with stale state.
-                raise IdempotencyKeyReused()
+            if existing.status == "applied":
+                # Replay the original success snapshot byte-identically.
+                return ("accepted", stored.get("result") or {})
+            if existing.status == "conflict":
+                # Replay the original LWW rejection so the client sees
+                # the same conflict on every retry, not a fresh check
+                # against (potentially) further-mutated server state.
+                return (
+                    "conflict",
+                    stored.get("conflict") or {"reason": "stale_event"},
+                )
+            # 'pending' is impossible post-commit — defensive: treat as
+            # reuse rather than re-running with stale state.
+            raise IdempotencyKeyReused()
 
-            return stored_result
-
-        # --- 3. Winner path: apply SM-2 + persist Review + finalize. -------
-        # Lock the row before reading SM-2 fields. Two concurrent reviews
-        # on the same card now serialize at this point. Soft-deleted
+        # --- Winner path: claim the row and process. ----------------------
+        # Lookup before LWW so a missing/foreign card surfaces as 404
+        # (rolled back along with the SyncEvent INSERT). Soft-deleted
         # cards are invisible — reviewing a tombstone is meaningless.
         card = Card.objects.select_for_update().get(
             id=payload.card_id,
@@ -223,6 +256,32 @@ def _apply_review_tx(*, payload: ReviewIn, user_id: int) -> dict:
             deleted_at__isnull=True,
         )
 
+        if lww_loses(
+            payload.client_ts,
+            payload.client_event_id,
+            card.last_client_ts,
+            card.last_event_id,
+        ):
+            # 3. LWW rejected: persist the conflict so retries replay it,
+            # then return the conflict tuple. We DO NOT raise here — the
+            # SyncEvent UPDATE must commit alongside the (unchanged) Card
+            # state so the next retry of this exact event id finds the
+            # frozen rejection.
+            conflict_details = {
+                "reason": "stale_event",
+                "server_state": serialize_card_state(card),
+            }
+            SyncEvent.objects.filter(id=payload.client_event_id).update(
+                payload={
+                    "request": request_snapshot,
+                    "result": None,
+                    "conflict": conflict_details,
+                },
+                status="conflict",
+            )
+            return ("conflict", conflict_details)
+
+        # 4. LWW won: apply SM-2 to the locked card.
         prev_interval = card.interval_days
         next_state = calculate_next_state(
             state=card.state,
@@ -238,11 +297,8 @@ def _apply_review_tx(*, payload: ReviewIn, user_id: int) -> dict:
         card.interval_days = next_state["interval_days"]
         card.repetitions = next_state["repetitions"]
         card.due_at = new_due_at
-        # Stamp the LWW signature so the next sync push sees this client
-        # event as the "current" baseline. Online POST /reviews is the
-        # authoritative source-of-truth for the moment it happens, so
-        # we don't run the LWW comparison here — the sync push wrapper
-        # does that for replayed offline events before delegating.
+        # Stamp the LWW signature so the next push event sees this client
+        # event as the "current" baseline.
         card.last_client_ts = payload.client_ts
         card.last_event_id = payload.client_event_id
         card.save(
@@ -267,24 +323,25 @@ def _apply_review_tx(*, payload: ReviewIn, user_id: int) -> dict:
             duration_ms=payload.duration_ms,
         )
 
-        # Finalize the SyncEvent with the response snapshot so retries
-        # have something to replay. Status flips from 'pending' to
-        # 'applied' once the full transaction succeeds.
+        # 5. Finalize: applied + result snapshot for retry replay.
         result_snapshot = _serialize_card_out(card)
         SyncEvent.objects.filter(id=payload.client_event_id).update(
-            payload={"request": request_snapshot, "result": result_snapshot},
+            payload={
+                "request": request_snapshot,
+                "result": result_snapshot,
+                "conflict": None,
+            },
             status="applied",
         )
-
-        return result_snapshot
+        return ("accepted", result_snapshot)
 
 
 @router.post("", response={200: CardOut, 404: dict, 409: dict})
 async def submit_review(request, payload: ReviewIn):
     try:
-        data = await sync_to_async(_apply_review_tx, thread_sensitive=True)(
-            payload=payload, user_id=request.user.id
-        )
+        outcome, details = await sync_to_async(
+            _apply_review_tx, thread_sensitive=True
+        )(payload=payload, user_id=request.user.id)
     except Card.DoesNotExist:
         # 404 — never 403 — for the same enumeration-protection reason
         # as decks/cards: don't leak that the id exists but isn't yours.
@@ -292,4 +349,14 @@ async def submit_review(request, payload: ReviewIn):
     except IdempotencyKeyReused:
         return Status(409, {"detail": "idempotency_key_reused"})
 
-    return Status(200, CardOut(**data))
+    if outcome == "accepted":
+        return Status(200, CardOut(**details))
+    # outcome == "conflict": LWW rejected. Surface as 409 with the
+    # server_state so the client can re-merge.
+    return Status(
+        409,
+        {
+            "detail": "stale_review",
+            "server_state": details.get("server_state"),
+        },
+    )

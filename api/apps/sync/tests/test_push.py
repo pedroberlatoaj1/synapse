@@ -55,6 +55,11 @@ def stamp_card_lww(card_id, ts, event_id):
 
 
 @sync_to_async
+def update_card_fields(card_id, **fields):
+    Card.objects.filter(id=card_id).update(**fields)
+
+
+@sync_to_async
 def stamp_deck_lww(deck_id, ts, event_id):
     Deck.objects.filter(id=deck_id).update(
         last_client_ts=ts, last_event_id=event_id
@@ -171,6 +176,62 @@ async def test_update_event_with_stale_client_ts_is_rejected_as_conflict(
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
+async def test_replaying_stale_conflict_returns_original_server_state(
+    async_client,
+):
+    """A retry of the same losing event must replay the frozen conflict.
+
+    It must not re-run LWW against a server state that has moved on since
+    the first rejection.
+    """
+    alice = await make_user("alice@example.com")
+    deck = await make_deck(alice)
+    card = await make_card(deck, front="server-front")
+    token = await make_token(alice)
+
+    server_ts = timezone.now()
+    await stamp_card_lww(card.id, server_ts, uuid.uuid4())
+
+    stale_ts = server_ts - timedelta(seconds=10)
+    stale_event = uuid.uuid4()
+    body = push_body(
+        [
+            make_event(
+                op="update",
+                entity_type="card",
+                entity_id=card.id,
+                payload={"front": "client-stale"},
+                client_ts=stale_ts,
+                event_id=stale_event,
+            )
+        ]
+    )
+
+    first = await async_client.post(
+        PUSH_URL, data=body, content_type=JSON, headers=bearer(token)
+    )
+    assert first.status_code == 200
+    first_conflict = first.json()["conflicts"][0]
+    assert first_conflict["reason"] == "stale_event"
+    assert first_conflict["server_state"]["front"] == "server-front"
+
+    await update_card_fields(
+        card.id,
+        front="server-moved-on",
+        last_client_ts=server_ts + timedelta(seconds=30),
+        last_event_id=uuid.uuid4(),
+    )
+
+    second = await async_client.post(
+        PUSH_URL, data=body, content_type=JSON, headers=bearer(token)
+    )
+    assert second.status_code == 200
+    assert second.json()["accepted"] == []
+    assert second.json()["conflicts"] == [first_conflict]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
 async def test_update_event_with_newer_client_ts_is_applied(async_client):
     alice = await make_user("alice@example.com")
     deck = await make_deck(alice)
@@ -209,6 +270,34 @@ async def test_update_event_with_newer_client_ts_is_applied(async_client):
     refreshed = await get_card(card.id)
     assert refreshed.front == "new-front"
     assert refreshed.last_event_id == new_event
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_push_rejects_naive_client_ts(async_client):
+    alice = await make_user("alice@example.com")
+    deck = await make_deck(alice)
+    card = await make_card(deck, front="initial")
+    token = await make_token(alice)
+
+    event = make_event(
+        op="update",
+        entity_type="card",
+        entity_id=card.id,
+        payload={"front": "should-not-apply"},
+    )
+    event["client_ts"] = "2026-04-27T10:00:00"
+
+    resp = await async_client.post(
+        PUSH_URL,
+        data=push_body([event]),
+        content_type=JSON,
+        headers=bearer(token),
+    )
+
+    assert resp.status_code == 422
+    refreshed = await get_card(card.id)
+    assert refreshed.front == "initial"
 
 
 # === 3) LWW tiebreaker on identical client_ts =============================
@@ -423,6 +512,55 @@ async def test_create_deck_event_creates_deck_owned_by_user(async_client):
     deck = await get_deck(new_deck_id)
     assert deck.user_id == alice.id
     assert deck.name == "Created via sync"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_create_integrity_conflict_uses_savepoint_and_batch_continues(
+    async_client,
+):
+    alice = await make_user("alice@example.com")
+    existing = await make_deck(alice, name="Already here")
+    token = await make_token(alice)
+    duplicate_event = uuid.uuid4()
+    fresh_event = uuid.uuid4()
+    fresh_deck_id = uuid.uuid4()
+
+    resp = await async_client.post(
+        PUSH_URL,
+        data=push_body(
+            [
+                make_event(
+                    op="create",
+                    entity_type="deck",
+                    entity_id=existing.id,
+                    payload={"name": "duplicate"},
+                    event_id=duplicate_event,
+                ),
+                make_event(
+                    op="create",
+                    entity_type="deck",
+                    entity_id=fresh_deck_id,
+                    payload={"name": "fresh"},
+                    event_id=fresh_event,
+                ),
+            ]
+        ),
+        content_type=JSON,
+        headers=bearer(token),
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert str(fresh_event) in body["accepted"]
+    assert body["conflicts"] == [
+        {
+            "event_id": str(duplicate_event),
+            "reason": "entity_already_exists",
+            "server_state": None,
+        }
+    ]
+    assert await deck_exists(fresh_deck_id)
 
 
 # === 7) op=delete cascades ================================================

@@ -15,8 +15,8 @@ never blocks event Y. Inside each transaction we:
    this point — without that lock, two simultaneous updates could each read
    the same baseline and write back inconsistent next-states.
 2. Try ``INSERT INTO sync_syncevent ... ON CONFLICT (id) DO NOTHING`` to claim
-   the event id. A retry of an already-applied event short-circuits as
-   ``accepted`` without touching the entity again.
+   the event id as ``pending``. A retry replays the stored terminal outcome
+   instead of re-running the mutation.
 3. ``select_for_update`` the target Deck/Card scoped to ``user_id == request.user.id``.
    A row in another user's space is invisible — the predicate yields
    ``DoesNotExist`` and the event surfaces as a conflict, never a 403/404
@@ -27,10 +27,10 @@ never blocks event Y. Inside each transaction we:
 5. Apply the mutation and stamp ``last_client_ts``, ``last_event_id``, and
    ``updated_at = timezone.now()``.
 
-For ``op="review"`` we LWW-check the card up front, then delegate to
-``apps.reviews.api._apply_review_tx`` so the SM-2 math stays in one place.
-That helper does its own ``INSERT ... ON CONFLICT`` on the same SyncEvent id,
-so retries naturally collapse into the existing idempotency dance there.
+For ``op="review"`` we delegate to ``apps.reviews.api._apply_review_tx``.
+That helper owns the advisory lock, dedupe row, LWW check, and SM-2 mutation
+inside one transaction, so the review path has the same terminal replay
+semantics without duplicating the scheduling math here.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ import base64
 import binascii
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Literal
 
 from asgiref.sync import sync_to_async
@@ -54,6 +54,8 @@ from apps.accounts.auth import AsyncJWTAuth
 from apps.decks.models import Card, Deck
 from apps.reviews.api import IdempotencyKeyReused, _apply_review_tx
 from apps.reviews.schemas import ReviewIn
+from apps.sync.lww import lww_loses, serialize_card_state, serialize_deck_state
+from apps.sync.models import SyncEvent
 from apps.sync.schemas import (
     PushConflict,
     PushIn,
@@ -187,58 +189,22 @@ async def changes(
 
 
 # === POST / (push) ========================================================
-
-# Sentinels used in the LWW comparison when an entity has never been
-# touched by a sync event before — that maps to (epoch, all-zeros UUID),
-# both of which are strictly less than any real (client_ts, event_id),
-# so a first-ever event always wins.
-_LWW_NEVER_TS = datetime.min.replace(tzinfo=UTC)
-_LWW_NEVER_ID = uuid.UUID(int=0)
-
-
-def _serialize_deck(deck: Deck) -> dict:
-    return {
-        "id": str(deck.id),
-        "name": deck.name,
-        "description": deck.description,
-        "is_public": deck.is_public,
-        "updated_at": deck.updated_at.isoformat(),
-        "deleted_at": deck.deleted_at.isoformat() if deck.deleted_at else None,
-    }
-
-
-def _serialize_card(card: Card) -> dict:
-    return {
-        "id": str(card.id),
-        "deck_id": str(card.deck_id),
-        "front": card.front,
-        "back": card.back,
-        "state": card.state,
-        "ease_factor": card.ease_factor,
-        "interval_days": card.interval_days,
-        "repetitions": card.repetitions,
-        "due_at": card.due_at.isoformat(),
-        "updated_at": card.updated_at.isoformat(),
-        "deleted_at": card.deleted_at.isoformat() if card.deleted_at else None,
-    }
-
-
-def _lww_loses(
-    incoming_ts: datetime,
-    incoming_id: uuid.UUID,
-    entity_ts: datetime | None,
-    entity_id: uuid.UUID | None,
-) -> bool:
-    """True if the incoming event should LOSE to the stored signature.
-
-    Comparison is over the tuple (client_ts, event_id) — the older
-    timestamp loses, and ties are broken by event UUID order so the
-    decision is deterministic regardless of which device's request
-    arrived at the server first.
-    """
-    baseline_ts = entity_ts or _LWW_NEVER_TS
-    baseline_id = entity_id or _LWW_NEVER_ID
-    return (incoming_ts, incoming_id) <= (baseline_ts, baseline_id)
+#
+# State machine for the SyncEvent row of every push event:
+#
+#   pending  ── transient; only seen mid-transaction
+#      │
+#      ├── applied  (winner, mutation persisted, ``payload.result`` set)
+#      │
+#      └── conflict (LWW or precondition rejection,
+#                    ``payload.conflict`` set with reason + server_state)
+#
+# The INSERT lands the row as ``pending`` and the same transaction always
+# flips it to a terminal status before commit. A retry of the same event
+# therefore takes the loser path on the PK conflict, reads the terminal
+# status under SELECT FOR UPDATE, and replays the original outcome
+# byte-identically — never re-running the LWW check against a baseline
+# that has since moved on.
 
 
 def _take_advisory_lock(cursor, user_id: int, entity_id: uuid.UUID) -> None:
@@ -254,19 +220,40 @@ def _take_advisory_lock(cursor, user_id: int, entity_id: uuid.UUID) -> None:
     )
 
 
-def _claim_sync_event(
+def _serialize_event_request(event: SyncEventItem, device_id: str) -> dict:
+    """Stable, JSON-friendly snapshot used for the loser-path body check.
+
+    ``device_id`` is included because two events with the same id from
+    different devices is a bug the server should refuse to silently
+    accept; comparing it via the request envelope catches that.
+    """
+    return {
+        "id": str(event.id),
+        "op": event.op,
+        "entity_type": event.entity_type,
+        "entity_id": str(event.entity_id),
+        "client_ts": event.client_ts.isoformat(),
+        "device_id": device_id,
+        "payload": event.payload,
+    }
+
+
+def _claim_sync_event_pending(
     cursor,
     *,
     event: SyncEventItem,
     user_id: int,
     device_id: str,
+    request_snapshot: dict,
 ) -> bool:
-    """Try to insert the SyncEvent row; return True if THIS call won.
+    """INSERT the SyncEvent as ``pending``; True iff THIS call won the PK race.
 
-    A False return means the row already existed — i.e. the event was
-    already applied by an earlier request. The caller short-circuits
-    that as ``accepted`` to keep retries idempotent.
+    The row stays ``pending`` for the rest of this transaction. The
+    same transaction must UPDATE it to either ``applied`` or
+    ``conflict`` before commit; a rollback erases the row entirely so
+    a retry can re-claim it cleanly.
     """
+    initial_envelope = {"request": request_snapshot, "result": None, "conflict": None}
     cursor.execute(
         """
         INSERT INTO sync_syncevent
@@ -283,12 +270,75 @@ def _claim_sync_event(
             event.entity_type,
             str(event.entity_id),
             event.op,
-            json.dumps({"request": event.payload}),
+            json.dumps(initial_envelope),
             event.client_ts,
-            "applied",
+            "pending",
         ],
     )
     return cursor.fetchone() is not None
+
+
+def _replay_sync_event(
+    *,
+    event: SyncEventItem,
+    user_id: int,
+    request_snapshot: dict,
+) -> tuple[Literal["accepted", "conflict"], dict | None]:
+    """Loser-path replay: read the terminal SyncEvent and return its outcome.
+
+    SELECT FOR UPDATE blocks until the original transaction commits, so
+    by the time we read the row its status is always ``applied`` or
+    ``conflict`` — never the transient ``pending``. A ``request``
+    mismatch (same id reused with a different body) is a client bug or
+    replay attack and surfaces as ``idempotency_key_reused``; we never
+    overwrite the original outcome.
+    """
+    try:
+        existing = SyncEvent.objects.select_for_update().get(
+            id=event.id, user_id=user_id
+        )
+    except SyncEvent.DoesNotExist:
+        return "conflict", {"reason": "idempotency_key_reused"}
+
+    stored = existing.payload or {}
+    if stored.get("request") != request_snapshot:
+        return "conflict", {"reason": "idempotency_key_reused"}
+
+    if existing.status == "applied":
+        return "accepted", None
+    if existing.status == "conflict":
+        return "conflict", stored.get("conflict") or {"reason": "stale_event"}
+    # 'pending' should not be reachable post-commit — defensive.
+    return "conflict", {"reason": "idempotency_key_reused"}
+
+
+def _finalize_sync_event(
+    event_id: uuid.UUID,
+    *,
+    request_snapshot: dict,
+    outcome: str,
+    details: dict | None,
+) -> None:
+    """Stamp the SyncEvent with its terminal status + payload envelope.
+
+    Called from inside the same transaction that claimed the row so the
+    INSERT and the terminal UPDATE either both commit or both roll back.
+    """
+    if outcome == "accepted":
+        envelope = {
+            "request": request_snapshot,
+            "result": details or {},
+            "conflict": None,
+        }
+        status = "applied"
+    else:
+        envelope = {
+            "request": request_snapshot,
+            "result": None,
+            "conflict": details or {},
+        }
+        status = "conflict"
+    SyncEvent.objects.filter(id=event_id).update(payload=envelope, status=status)
 
 
 def _apply_create(
@@ -297,23 +347,27 @@ def _apply_create(
     user_id: int,
     now: datetime,
 ) -> tuple[Literal["accepted", "conflict"], dict | None]:
-    """Insert a new Deck/Card with the LWW signature stamped on creation."""
+    """Insert a new Deck/Card with the LWW signature stamped on creation.
+
+    The .create() call runs inside a savepoint (Django creates one for
+    nested ``transaction.atomic`` blocks) so an IntegrityError on duplicate
+    PK doesn't poison the outer tx — we still need to UPDATE the
+    SyncEvent row to ``conflict`` before commit.
+    """
     if event.entity_type == "deck":
         try:
-            Deck.objects.create(
-                id=event.entity_id,
-                user_id=user_id,
-                name=event.payload.get("name", ""),
-                description=event.payload.get("description", ""),
-                is_public=event.payload.get("is_public", False),
-                last_client_ts=event.client_ts,
-                last_event_id=event.id,
-                updated_at=now,
-            )
+            with transaction.atomic():
+                Deck.objects.create(
+                    id=event.entity_id,
+                    user_id=user_id,
+                    name=event.payload.get("name", ""),
+                    description=event.payload.get("description", ""),
+                    is_public=event.payload.get("is_public", False),
+                    last_client_ts=event.client_ts,
+                    last_event_id=event.id,
+                    updated_at=now,
+                )
         except IntegrityError:
-            # Another device already created an entity with this id; the
-            # owner of that row is authoritative. We surface as a conflict
-            # rather than overwriting blindly.
             return "conflict", {"reason": "entity_already_exists"}
         return "accepted", None
 
@@ -326,16 +380,17 @@ def _apply_create(
     ).exists():
         return "conflict", {"reason": "deck_not_found"}
     try:
-        Card.objects.create(
-            id=event.entity_id,
-            deck_id=deck_id,
-            user_id=user_id,
-            front=event.payload.get("front", ""),
-            back=event.payload.get("back", ""),
-            last_client_ts=event.client_ts,
-            last_event_id=event.id,
-            updated_at=now,
-        )
+        with transaction.atomic():
+            Card.objects.create(
+                id=event.entity_id,
+                deck_id=deck_id,
+                user_id=user_id,
+                front=event.payload.get("front", ""),
+                back=event.payload.get("back", ""),
+                last_client_ts=event.client_ts,
+                last_event_id=event.id,
+                updated_at=now,
+            )
     except IntegrityError:
         return "conflict", {"reason": "entity_already_exists"}
     return "accepted", None
@@ -358,8 +413,12 @@ def _apply_update_or_delete(
         # all three cases so the user space stays unobservable.
         return "conflict", {"reason": "entity_not_found"}
 
-    if _lww_loses(event.client_ts, event.id, entity.last_client_ts, entity.last_event_id):
-        serialize = _serialize_deck if isinstance(entity, Deck) else _serialize_card
+    if lww_loses(
+        event.client_ts, event.id, entity.last_client_ts, entity.last_event_id
+    ):
+        serialize = (
+            serialize_deck_state if isinstance(entity, Deck) else serialize_card_state
+        )
         return "conflict", {"reason": "stale_event", "server_state": serialize(entity)}
 
     update_fields = ["last_client_ts", "last_event_id", "updated_at"]
@@ -402,40 +461,18 @@ def _apply_review_event(
     user_id: int,
     device_id: str,
 ) -> tuple[Literal["accepted", "conflict"], dict | None]:
-    """LWW-check the card, then delegate to the existing review pipeline.
+    """Delegate to the unified review pipeline.
 
-    The review path's own ``_apply_review_tx`` handles the SyncEvent
-    INSERT (so we DON'T pre-claim it here for review events) and the
-    SM-2 math; we just gatekeep stale events at the door.
+    ``_apply_review_tx`` already does the advisory lock, the SyncEvent
+    dedupe + state machine, the LWW check, and the SM-2 mutation in
+    one atomic block (Bloco 11 P0 fix). We just translate exceptions
+    and tuple outcomes into the push response shape.
     """
     rating = event.payload.get("rating")
     duration_ms = event.payload.get("duration_ms")
     if rating is None or duration_ms is None:
         return "conflict", {"reason": "invalid_review_payload"}
 
-    with transaction.atomic():
-        with connection.cursor() as cur:
-            _take_advisory_lock(cur, user_id, event.entity_id)
-        try:
-            card = Card.objects.select_for_update().get(
-                id=event.entity_id,
-                user_id=user_id,
-                deck__deleted_at__isnull=True,
-                deleted_at__isnull=True,
-            )
-        except Card.DoesNotExist:
-            return "conflict", {"reason": "card_not_found"}
-
-        if _lww_loses(event.client_ts, event.id, card.last_client_ts, card.last_event_id):
-            return "conflict", {
-                "reason": "stale_event",
-                "server_state": _serialize_card(card),
-            }
-
-    # Lock released before delegating. _apply_review_tx opens its own
-    # transaction with its own lock + dedupe machinery; an incoming
-    # event from a device replaying the same review now collapses into
-    # idempotent retry semantics inside that helper.
     review_in = ReviewIn(
         card_id=event.entity_id,
         rating=rating,
@@ -445,12 +482,17 @@ def _apply_review_event(
         client_ts=event.client_ts,
     )
     try:
-        _apply_review_tx(payload=review_in, user_id=user_id)
-    except IdempotencyKeyReused:
-        return "conflict", {"reason": "idempotency_key_reused"}
+        outcome, details = _apply_review_tx(payload=review_in, user_id=user_id)
     except Card.DoesNotExist:
         return "conflict", {"reason": "card_not_found"}
-    return "accepted", None
+    except IdempotencyKeyReused:
+        return "conflict", {"reason": "idempotency_key_reused"}
+
+    if outcome == "accepted":
+        # Push response only carries event_id in ``accepted`` — the card
+        # snapshot is internal to /reviews replay.
+        return "accepted", None
+    return "conflict", details
 
 
 def _apply_event(
@@ -469,26 +511,47 @@ def _apply_event(
     if event.op == "review":
         return _apply_review_event(event=event, user_id=user_id, device_id=device_id)
 
+    request_snapshot = _serialize_event_request(event, device_id)
     now = timezone.now()
     with transaction.atomic():
         with connection.cursor() as cur:
             _take_advisory_lock(cur, user_id, event.entity_id)
-            event_was_new = _claim_sync_event(
-                cur, event=event, user_id=user_id, device_id=device_id
+            event_was_new = _claim_sync_event_pending(
+                cur,
+                event=event,
+                user_id=user_id,
+                device_id=device_id,
+                request_snapshot=request_snapshot,
             )
         if not event_was_new:
-            # Already processed in a previous request; treat as accepted
-            # so retries are visibly idempotent in the response shape.
-            return "accepted", None
+            # Replay the original terminal outcome (applied or conflict)
+            # so retries see byte-identical responses.
+            return _replay_sync_event(
+                event=event,
+                user_id=user_id,
+                request_snapshot=request_snapshot,
+            )
 
         if event.op == "create":
-            return _apply_create(event=event, user_id=user_id, now=now)
-        if event.op in ("update", "delete"):
-            return _apply_update_or_delete(event=event, user_id=user_id, now=now)
+            outcome, details = _apply_create(event=event, user_id=user_id, now=now)
+        elif event.op in ("update", "delete"):
+            outcome, details = _apply_update_or_delete(
+                event=event, user_id=user_id, now=now
+            )
+        else:
+            # Pydantic's Literal prunes invalid ops at parse time; defensive.
+            outcome, details = "conflict", {"reason": "unsupported_op"}
 
-    # Pydantic's Literal already prunes invalid ops at request parse
-    # time, but defensive: surface anything else as a conflict.
-    return "conflict", {"reason": "unsupported_op"}
+        # Finalize SyncEvent inside the same transaction so the INSERT
+        # and terminal UPDATE commit together. A retry seeing the row
+        # always sees its terminal status.
+        _finalize_sync_event(
+            event.id,
+            request_snapshot=request_snapshot,
+            outcome=outcome,
+            details=details,
+        )
+        return outcome, details
 
 
 @router.post("", response={200: PushResponse})

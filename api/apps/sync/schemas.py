@@ -11,11 +11,11 @@ Keeping them separate means the public CRUD payload stays minimal
 while the sync surface carries everything a replica needs.
 """
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 
 from ninja import Schema
-from pydantic import Field
+from pydantic import Field, field_validator
 
 
 class DeckSync(Schema):
@@ -67,6 +67,26 @@ class SyncEventItem(Schema):
     entity_id: uuid.UUID
     client_ts: datetime
     payload: dict
+
+    @field_validator("client_ts")
+    @classmethod
+    def _require_tz_aware_utc(cls, value: datetime) -> datetime:
+        """Reject naive datetimes; normalize tz-aware ones to UTC.
+
+        Naive client_ts is a security and correctness hazard: comparing
+        a naive ``2026-04-27T10:00:00`` against a UTC-aware row stored
+        in Postgres would either raise or silently misorder events
+        across DST boundaries / clients in different zones. Forcing
+        ``tzinfo`` at the door means every LWW comparison downstream
+        is between two UTC instants — no implicit conversions, no
+        room for the wrong device to "win" because of a timezone
+        mismatch.
+        """
+        if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+            raise ValueError(
+                "client_ts must be timezone-aware (ISO 8601 with Z or ±HH:MM suffix)"
+            )
+        return value.astimezone(UTC)
 
 
 class PushIn(Schema):
