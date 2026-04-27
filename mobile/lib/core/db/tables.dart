@@ -79,7 +79,8 @@ class LocalDecks extends Table {
 
 class LocalCards extends Table {
   TextColumn get id => text()();
-  TextColumn get deckId => text()();
+  TextColumn get deckId =>
+      text().references(LocalDecks, #id, onDelete: KeyAction.noAction)();
   TextColumn get front => text()();
   TextColumn get back => text()();
   TextColumn get state => text().check(state.isIn(LocalCardState.values))();
@@ -98,6 +99,7 @@ class LocalCards extends Table {
   Set<Column> get primaryKey => {id};
 }
 
+@TableIndex(name: 'sync_events_status_clientts_idx', columns: {#status, #clientTs})
 class SyncEvents extends Table {
   TextColumn get id => text()();
   TextColumn get entityType =>
@@ -112,6 +114,9 @@ class SyncEvents extends Table {
   IntColumn get retryCount => integer()
       .check(retryCount.isBiggerOrEqualValue(0))
       .withDefault(const Constant(0))();
+  TextColumn get lastErrorJson => text().nullable()();
+  IntColumn get lastAttemptAt =>
+      integer().map(const UtcDateTimeConverter()).nullable()();
 
   @override
   Set<Column> get primaryKey => {id};

@@ -166,7 +166,14 @@ class LocalSyncEventDao extends DatabaseAccessor<AppDatabase>
   LocalSyncEventDao(super.db);
 
   Future<void> enqueue(SyncEventsCompanion event) async {
-    await into(syncEvents).insertOnConflictUpdate(event);
+    // insertOrIgnore — never overwrite an already-queued event row.
+    // Event ids are immutable per the sync contract, so a re-enqueue
+    // with the same id is necessarily a duplicate; upserting would
+    // demote a 'sending'/'accepted' row back to a fresh 'queued' state
+    // and risk a second send to the server. Ignoring the conflict
+    // preserves the original row and its current state.
+    await into(syncEvents)
+        .insert(event, mode: InsertMode.insertOrIgnore);
   }
 
   Future<List<SyncEvent>> getPendingEvents({int limit = 100}) {
@@ -205,9 +212,17 @@ class LocalSyncEventDao extends DatabaseAccessor<AppDatabase>
     );
   }
 
-  Future<int> markConflict(String id) {
+  Future<int> markConflict(
+    String id, {
+    required String serverResponse,
+    required DateTime nowUtc,
+  }) {
     return (update(syncEvents)..where((t) => t.id.equals(id))).write(
-      const SyncEventsCompanion(status: Value(LocalSyncStatus.conflict)),
+      SyncEventsCompanion(
+        status: const Value(LocalSyncStatus.conflict),
+        lastErrorJson: Value(serverResponse),
+        lastAttemptAt: Value(nowUtc),
+      ),
     );
   }
 

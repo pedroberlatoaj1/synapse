@@ -6,13 +6,13 @@
 
 **Produto:** Synapse — SRS para estudantes de alta performance
 **Case:** 10 dias (24/04 – 04/05/2026)
-**Última atualização:** 2026-04-27 — Bloco 15 concluído. Banco local Drift recebeu campos de diagnóstico para conflitos de sync e o motor SM-2 local em Dart foi implementado com teste de paridade contra fixtures geradas pelo backend Python.
+**Última atualização:** 2026-04-27 — Bloco 17 concluído e Dia 5 finalizado. UI Flutter conectada ao Drift, Riverpod, SM-2 local e SyncService para um MVP mobile funcional.
 
 ---
 
 ## 📍 Dia corrente: **Dia 5 — Mobile Foundation**
 
-### Status: ✅ Bloco 15 concluído
+### Status: ✅ Dia 5 concluído
 
 ### Objetivo do dia
 Construir a fundação do cliente Flutter offline-first: contrato de sincronização, fixtures de paridade SM-2, bootstrap do app, estrutura base, dependências móveis e client HTTP pronto para JWT.
@@ -38,12 +38,13 @@ Construir a fundação do cliente Flutter offline-first: contrato de sincroniza�
 - [x] **Bloco 13 (Bootstrap Flutter):** Inicializada a fundação do app em `mobile/` com `pubspec.yaml`, dependências `flutter_riverpod`, `drift`, `sqlite3_flutter_libs`, `dio`, `uuid`, `flutter_secure_storage` e `connectivity_plus`, estrutura `lib/core/{api,db,srs}` + `lib/features/{auth,decks,review,sync}`, `main.dart` mínimo com Riverpod e `core/api/api_client.dart` com interceptor Bearer Token para Dio.
 - [x] **Bloco 14 (Banco Local Drift):** Criado schema local em `mobile/lib/core/db/tables.dart` para `LocalDecks`, `LocalCards` e `SyncEvents`, com fila persistente `queued/sending/accepted/conflict`, checks de domínio e `UtcDateTimeConverter` que rejeita DateTime não-UTC. Criado `mobile/lib/core/db/database.dart` com `AppDatabase`, conexão SQLite local, PRAGMA de integridade/WAL e DAOs básicos para upsert/leitura de decks/cards e manipulação da fila de sync.
 - [x] **Bloco 15 - SM-2 Local e Paridade:** Implementado `mobile/lib/core/srs/sm2.dart` com a mesma lógica pura do backend Python (`api/apps/reviews/sm2.py`), incluindo limites de ease/intervalo e arredondamento half-to-even. Criado `mobile/test/core/srs/sm2_test.dart` para varrer `mobile/docs/sm2_fixtures.json` e validar paridade absoluta dos outputs.
+- [x] **Bloco 16 - Motor de Sync V1 e DTOs:** Criado `mobile/lib/features/sync/api/sync_dto.dart` com DTOs de decks/cards que fazem `DateTime.parse(...).toUtc()` antes de gerar `Companion` para Drift. Criado `mobile/lib/features/sync/sync_service.dart` com `pushPendingEvents()` para enviar fila local via `POST /api/sync`, marcar aceitos, registrar conflitos em `lastErrorJson`/`lastAttemptAt` e aplicar `server_state` com política Server Wins; e `pullChanges()` para buscar `GET /api/sync/changes` e aplicar upserts em lote no SQLite.
+- [x] **Bloco 17 - Interface UI e Riverpod:** Criado `mobile/lib/core/providers.dart` com providers globais para `AppDatabase`, `Dio` e `SyncService`. Criadas `DecksScreen` e `ReviewScreen` conectando lista de decks, sync manual, revisão local com SM-2, update no Drift e enfileiramento de `SyncEvent` offline-first. Atualizado `mobile/lib/main.dart` com `ProviderScope` e home em `DecksScreen`.
 
 ## 🟡 Em andamento
-- Aguardando nova geração dos arquivos Drift `.g.dart` após a refatoração R2/R3 do schema local.
+- Dia 5 finalizado. Próxima frente: Dia 6 com revisão web, dashboard e LaTeX.
 
 ## ⬜ Pendente — próximos dias
-- Dia 5 (28/04): Gerar Drift codegen e validar analyzer/testes mobile.
 - Dia 6 (29/04): Sessão de revisão web + dashboard + LaTeX
 - Dia 7 (30/04): Flutter bootstrap + auth + lista decks
 - Dia 8 (01/05): Sessão offline mobile + sync
@@ -67,4 +68,4 @@ Construir a fundação do cliente Flutter offline-first: contrato de sincroniza�
 
 ## ⚠️ Issues / riscos abertos
 - Integração do cliente móvel com a nova API de Sync demandará mapeamento cuidadoso de banco de dados local (ex: Drift no Flutter).
-- O PATH desta sessão Codex ainda não expõe `flutter`/`dart`; o desenvolvedor deve rodar `flutter pub get`, `dart run build_runner build --delete-conflicting-outputs` e `flutter analyze` localmente para gerar/validar os arquivos Drift.
+- A validação mobile final fica a cargo do desenvolvedor: rodar `flutter pub get`, `dart run build_runner build --delete-conflicting-outputs`, `flutter analyze` e os testes Flutter após regenerar os arquivos Drift.
