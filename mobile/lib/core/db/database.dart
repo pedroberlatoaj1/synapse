@@ -120,10 +120,19 @@ class LocalCardDao extends DatabaseAccessor<AppDatabase> with _$LocalCardDaoMixi
 
   Future<List<LocalCard>> getDueCards({
     required DateTime nowUtc,
+    String? deckId,
     int limit = 50,
   }) {
     final query = select(localCards)
-      ..where((t) => t.deletedAt.isNull() & t.dueAt.isSmallerOrEqualValue(nowUtc))
+      ..where((t) {
+        final dueFilter =
+            t.deletedAt.isNull() & t.dueAt.isSmallerOrEqualValue(nowUtc);
+        final selectedDeckId = deckId;
+        if (selectedDeckId == null) {
+          return dueFilter;
+        }
+        return dueFilter & t.deckId.equals(selectedDeckId);
+      })
       ..orderBy([(t) => OrderingTerm.asc(t.dueAt)])
       ..limit(limit);
     return query.get();

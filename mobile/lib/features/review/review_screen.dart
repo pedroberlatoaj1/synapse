@@ -50,6 +50,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       final database = ref.read(appDatabaseProvider);
       final dueCards = await database.localCardDao.getDueCards(
         nowUtc: DateTime.now().toUtc(),
+        deckId: widget.deckId,
         limit: 500,
       );
 
@@ -57,9 +58,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
         return;
       }
       setState(() {
-        _cards = dueCards
-            .where((card) => card.deckId == widget.deckId)
-            .toList(growable: false);
+        _cards = dueCards;
         _currentIndex = 0;
         _showAnswer = false;
         _cardStartedAt = DateTime.now().toUtc();

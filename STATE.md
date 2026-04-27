@@ -45,11 +45,11 @@ Construir a fundação do cliente Flutter offline-first: contrato de sincroniza�
 - Dia 5 finalizado. Próxima frente: Dia 6 com revisão web, dashboard e LaTeX.
 
 ## ⬜ Pendente — próximos dias
-- Dia 6 (29/04): Sessão de revisão web + dashboard + LaTeX
-- Dia 7 (30/04): Flutter bootstrap + auth + lista decks
-- Dia 8 (01/05): Sessão offline mobile + sync
-- Dia 9 (02/05): Landing page + polish
-- Dia 10 (03/05): Deploy + vídeo + smoke E2E
+- Dia 6 (28/04): Painel Web (Revisão, Dashboard) + Suporte a LaTeX.
+- Dia 7 (29/04): Autenticação Auth0/JWT no App e Integração de Telas.
+- Dia 8 (30/04): Polimento de UI Mobile (Filtros, Animações) e Web.
+- Dia 9 (01/05): Landing Page Institucional.
+- Dia 10 (02/05): Deploy final, E2E e Lançamento.
 
 ---
 

@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:synapse_mobile/core/db/database.dart';
 import 'package:synapse_mobile/features/sync/sync_service.dart';
@@ -19,7 +20,12 @@ final appDatabaseProvider = Provider<AppDatabase>((ref) {
   return database;
 });
 
+final secureStorageProvider = Provider<FlutterSecureStorage>((ref) {
+  return const FlutterSecureStorage();
+});
+
 final dioProvider = Provider<Dio>((ref) {
+  final secureStorage = ref.watch(secureStorageProvider);
   final dio = Dio(
     BaseOptions(
       baseUrl: _defaultBaseUrl,
@@ -33,8 +39,12 @@ final dioProvider = Provider<Dio>((ref) {
 
   dio.interceptors.add(
     InterceptorsWrapper(
-      onRequest: (options, handler) {
+      onRequest: (options, handler) async {
         options.headers.putIfAbsent('Accept', () => Headers.jsonContentType);
+        final token = await secureStorage.read(key: 'jwt_token');
+        if (token != null && token.isNotEmpty) {
+          options.headers['Authorization'] = 'Bearer $token';
+        }
         handler.next(options);
       },
     ),
