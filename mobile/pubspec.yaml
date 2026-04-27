@@ -1,0 +1,26 @@
+name: synapse_mobile
+description: Synapse Flutter client with offline-first sync foundation.
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: ^2.6.1
+  drift: ^2.25.1
+  sqlite3_flutter_libs: ^0.5.29
+  dio: ^5.8.0+1
+  uuid: ^4.5.1
+  flutter_secure_storage: ^9.2.4
+  connectivity_plus: ^6.1.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
