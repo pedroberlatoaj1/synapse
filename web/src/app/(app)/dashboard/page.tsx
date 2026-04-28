@@ -1,28 +1,47 @@
 import { InlineMath } from "react-katex";
+import { redirect } from "next/navigation";
 
-const decks = [
-  {
-    title: "trigonometria",
-    description: "Identidades, circulo trigonometrico e funcoes seno/cosseno.",
-    cards: 32,
-    due: 8,
-  },
-  {
-    title: "botanica",
-    description: "Tecidos vegetais, fotossintese e ciclos reprodutivos.",
-    cards: 24,
-    due: 5,
-  },
-  {
-    title: "eletromagnetismo",
-    description: "Campos, forcas, fluxo magnetico e circuitos.",
-    cards: 41,
-    due: 13,
-    equation: "F = q(E + v \\times B)",
-  },
-];
+import { ApiError, apiFetch } from "../../../lib/api";
 
-export default function DashboardPage() {
+type Deck = {
+  id: string;
+  name: string;
+  description?: string;
+};
+
+type DeckListResponse = Deck[] | {
+  items: Deck[];
+};
+
+function normalizeDecks(response: DeckListResponse) {
+  return Array.isArray(response) ? response : response.items;
+}
+
+function maybeLatex(value: string) {
+  if (value.startsWith("$") && value.endsWith("$")) {
+    return <InlineMath math={value.slice(1, -1)} />;
+  }
+
+  return value;
+}
+
+async function getDecks() {
+  try {
+    const response = await apiFetch<DeckListResponse>("/decks", {
+      cache: "no-store",
+    });
+    return normalizeDecks(response);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      redirect("/login");
+    }
+    throw error;
+  }
+}
+
+export default async function DashboardPage() {
+  const decks = await getDecks();
+
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-50">
       <div className="flex min-h-screen">
@@ -66,49 +85,60 @@ export default function DashboardPage() {
               </h1>
             </div>
 
-            <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-              {decks.map((deck) => (
-                <article
-                  key={deck.title}
-                  className="rounded-xl border border-zinc-800 bg-zinc-900 p-6 shadow-lg shadow-black/20"
-                >
-                  <div className="flex min-h-56 flex-col justify-between gap-8">
-                    <div className="space-y-4">
-                      <div className="flex items-start justify-between gap-4">
-                        <h2 className="text-2xl font-semibold capitalize tracking-tight text-white">
-                          {deck.title}
-                        </h2>
-                        <span className="rounded-full border border-zinc-700 px-3 py-1 text-xs font-semibold text-zinc-300">
-                          {deck.due} hoje
-                        </span>
+            {decks.length === 0 ? (
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-10 text-center shadow-xl shadow-black/20">
+                <p className="text-sm font-medium uppercase tracking-wide text-zinc-500">
+                  Biblioteca vazia
+                </p>
+                <h2 className="mt-4 text-3xl font-bold tracking-tight text-white">
+                  Nenhum deck encontrado.
+                </h2>
+                <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-zinc-400">
+                  Quando seus decks forem criados ou sincronizados, eles
+                  aparecerao aqui para iniciar revisoes.
+                </p>
+              </div>
+            ) : (
+              <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+                {decks.map((deck) => (
+                  <article
+                    key={deck.id}
+                    className="rounded-xl border border-zinc-800 bg-zinc-900 p-6 shadow-lg shadow-black/20"
+                  >
+                    <div className="flex min-h-56 flex-col justify-between gap-8">
+                      <div className="space-y-4">
+                        <div className="flex items-start justify-between gap-4">
+                          <h2 className="text-2xl font-semibold tracking-tight text-white">
+                            {maybeLatex(deck.name)}
+                          </h2>
+                          <span className="rounded-full border border-zinc-700 px-3 py-1 text-xs font-semibold text-zinc-300">
+                            ativo
+                          </span>
+                        </div>
+
+                        <p className="text-sm leading-6 text-zinc-400">
+                          {deck.description
+                            ? maybeLatex(deck.description)
+                            : "Deck sincronizado com a API do Synapse."}
+                        </p>
                       </div>
 
-                      <p className="text-sm leading-6 text-zinc-400">
-                        {deck.description}
-                      </p>
-
-                      {deck.equation ? (
-                        <div className="rounded-lg border border-zinc-800 bg-zinc-950 px-4 py-3 text-center text-zinc-100">
-                          <InlineMath math={deck.equation} />
-                        </div>
-                      ) : null}
+                      <div className="flex items-center justify-between border-t border-zinc-800 pt-4">
+                        <span className="text-sm text-zinc-500">
+                          Revisao SM-2
+                        </span>
+                        <a
+                          className="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-200"
+                          href={`/review/${deck.id}`}
+                        >
+                          Revisar
+                        </a>
+                      </div>
                     </div>
-
-                    <div className="flex items-center justify-between border-t border-zinc-800 pt-4">
-                      <span className="text-sm text-zinc-500">
-                        {deck.cards} cards
-                      </span>
-                      <a
-                        className="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-200"
-                        href={`/review/${deck.title}`}
-                      >
-                        Revisar
-                      </a>
-                    </div>
-                  </div>
-                </article>
-              ))}
-            </div>
+                  </article>
+                ))}
+              </div>
+            )}
           </div>
         </section>
       </div>

@@ -6,7 +6,7 @@
 
 **Produto:** Synapse — SRS para estudantes de alta performance
 **Case:** 10 dias (24/04 – 04/05/2026)
-**Última atualização:** 2026-04-28 — Dia 7 em andamento: Blocos 18 e 19 concluídos com contrato JWT backend e fundação segura de autenticação Web.
+**Última atualização:** 2026-04-28 — Dia 7 em andamento: Blocos 18, 19 e 20 concluídos com JWT backend, auth Web segura, rotas protegidas e telas integradas à API.
 
 ---
 
@@ -52,9 +52,10 @@ Integrar autenticação JWT entre Backend, Web e Mobile, proteger rotas e conect
 ### Dia 7 — 2026-04-28 (Autenticação e Segurança)
 - [x] **Bloco 18 - Backend: validação do contrato JWT:** Finalizados `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/refresh` retornando `{ access, refresh }`, criada rota protegida `GET /api/auth/me` com `AsyncJWTAuth`, e atualizados testes do fluxo completo de auth.
 - [x] **Bloco 19 - Web: fundação de autenticação segura:** Criada tela `/login` em Next.js/Tailwind, BFF com Route Handlers para login/logout, persistência de `access` e `refresh` em cookies `httpOnly`, e `apiFetch` server-side com injeção automática do Bearer JWT.
+- [x] **Bloco 20 - Web: proteção e integração de telas:** Criado middleware protegendo `/dashboard` e `/review`, Dashboard convertido para Server Component consumindo `GET /api/decks`, sessão de revisão integrada à fila real `GET /api/reviews/queue` e submissão SM-2 via BFF `POST /api/reviews`.
 
 ## 🟡 Em andamento
-- Dia 7 em andamento. Próxima frente: Bloco 20 com proteção de rotas e integração real das telas Web.
+- Dia 7 em andamento. Próxima frente: Bloco 21 com fluxo de autenticação Mobile e storage seguro.
 
 ## ⬜ Pendente — próximos dias
 - Dia 8 (30/04): Polimento de UI Mobile (Filtros, Animações) e Web.
