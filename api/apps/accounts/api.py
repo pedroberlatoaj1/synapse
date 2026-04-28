@@ -1,4 +1,4 @@
-"""Auth endpoints — register, login, refresh.
+"""Auth endpoints — register, login, refresh, me.
 
 Note: this module deliberately does NOT use `from __future__ import
 annotations`. Pydantic v2 + ninja-extra's QueryParams wrapper can't
@@ -9,10 +9,11 @@ from django.contrib.auth import authenticate, get_user_model
 from django.db import IntegrityError, transaction
 from ninja import Schema
 from ninja.responses import Status
-from ninja_extra import api_controller, http_post
-from ninja_jwt.controller import NinjaJWTDefaultController
+from ninja_extra import api_controller, http_get, http_post
 from ninja_jwt.tokens import RefreshToken
 from pydantic import EmailStr, Field
+
+from apps.accounts.auth import AsyncJWTAuth
 
 
 class RegisterIn(Schema):
@@ -30,6 +31,16 @@ class TokenPair(Schema):
     refresh: str
 
 
+class RefreshIn(Schema):
+    refresh: str = Field(..., min_length=1)
+
+
+class MeOut(Schema):
+    id: str
+    email: EmailStr
+    name: str
+
+
 class ErrorOut(Schema):
     detail: str
 
@@ -39,18 +50,25 @@ def _token_pair_for(user) -> TokenPair:
     return TokenPair(access=str(refresh.access_token), refresh=str(refresh))
 
 
+def _display_name_for(user) -> str:
+    get_full_name = getattr(user, "get_full_name", None)
+    if callable(get_full_name):
+        full_name = get_full_name()
+        if full_name:
+            return full_name
+    return getattr(user, "name", "") or ""
+
+
 @api_controller("/auth", tags=["Auth"])
-class AuthController(NinjaJWTDefaultController):
+class AuthController:
     """Auth surface for the Synapse API.
 
-    Inheriting NinjaJWTDefaultController gives us /auth/pair, /auth/refresh,
-    and /auth/verify out of the box. We add the contract-level routes:
+    Contract-level routes consumed by the Web and Mobile clients:
 
       POST /auth/register — sign up + token pair
-      POST /auth/login    — authenticate + token pair (the spec name;
-                            /pair stays as a side-effect alias)
-
-    /auth/refresh comes inherited from the parent and matches the spec.
+      POST /auth/login    — authenticate + token pair
+      POST /auth/refresh  — validate refresh + issue a fresh token pair
+      GET  /auth/me       — authenticated user profile
     """
 
     @http_post(
@@ -94,3 +112,37 @@ class AuthController(NinjaJWTDefaultController):
         if user is None or not user.is_active:
             return Status(401, ErrorOut(detail="Invalid credentials"))
         return Status(200, _token_pair_for(user))
+
+    @http_post(
+        "/refresh",
+        response={200: TokenPair, 401: ErrorOut},
+        url_name="auth_refresh",
+        auth=None,
+    )
+    def refresh(self, payload: RefreshIn):
+        User = get_user_model()
+
+        try:
+            refresh = RefreshToken(payload.refresh)
+            user_id = refresh.payload.get("user_id")
+            if user_id is None:
+                return Status(401, ErrorOut(detail="Invalid refresh token"))
+            user = User.objects.get(id=user_id, is_active=True)
+        except Exception:
+            return Status(401, ErrorOut(detail="Invalid refresh token"))
+
+        return Status(200, _token_pair_for(user))
+
+    @http_get(
+        "/me",
+        response={200: MeOut},
+        url_name="auth_me",
+        auth=AsyncJWTAuth(),
+    )
+    async def me(self, request):
+        user = request.user
+        return MeOut(
+            id=str(user.id),
+            email=user.email,
+            name=_display_name_for(user),
+        )

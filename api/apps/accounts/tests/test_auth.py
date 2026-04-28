@@ -7,6 +7,7 @@ from django.contrib.auth import get_user_model
 REGISTER_URL = "/api/auth/register"
 LOGIN_URL = "/api/auth/login"
 REFRESH_URL = "/api/auth/refresh"
+ME_URL = "/api/auth/me"
 
 JSON = "application/json"
 
@@ -100,4 +101,39 @@ def test_refresh_with_valid_token_returns_new_access(client):
     )
 
     assert resp.status_code == 200
-    assert resp.json()["access"]
+    body = resp.json()
+    assert body["access"]
+    assert body["refresh"]
+
+
+@pytest.mark.django_db
+def test_me_with_valid_bearer_token_returns_authenticated_user(client):
+    user = get_user_model().objects.create_user(
+        email="erin@example.com",
+        password="pw-12345678",
+    )
+    login = client.post(
+        LOGIN_URL,
+        data={"email": "erin@example.com", "password": "pw-12345678"},
+        content_type=JSON,
+    )
+    assert login.status_code == 200
+    access_token = login.json()["access"]
+
+    resp = client.get(
+        ME_URL,
+        HTTP_AUTHORIZATION=f"Bearer {access_token}",
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["id"] == str(user.id)
+    assert body["email"] == "erin@example.com"
+    assert "name" in body
+
+
+@pytest.mark.django_db
+def test_me_without_bearer_token_returns_401(client):
+    resp = client.get(ME_URL)
+
+    assert resp.status_code == 401

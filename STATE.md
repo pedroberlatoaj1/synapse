@@ -6,16 +6,16 @@
 
 **Produto:** Synapse — SRS para estudantes de alta performance
 **Case:** 10 dias (24/04 – 04/05/2026)
-**Última atualização:** 2026-04-28 — Dia 6 concluído na Web: Next.js estruturado com Route Groups, Dashboard e KaTeX.
+**Última atualização:** 2026-04-28 — Dia 7 iniciado: Bloco 18 concluído com contrato JWT validado, refresh padronizado e rota `/auth/me`.
 
 ---
 
-## 📍 Dia corrente: **Dia 6 — Web Dashboard & LaTeX**
+## 📍 Dia corrente: **Dia 7 — Autenticação e Segurança**
 
-### Status: ✅ Dia 6 concluído
+### Status: 🟡 Dia 7 em andamento
 
 ### Objetivo do dia
-Estruturar o cliente Web em Next.js com App Router, Route Groups, Dashboard inicial e suporte nativo a LaTeX via KaTeX.
+Integrar autenticação JWT entre Backend, Web e Mobile, proteger rotas e conectar telas ao fluxo autenticado.
 
 ---
 
@@ -45,12 +45,17 @@ Estruturar o cliente Web em Next.js com App Router, Route Groups, Dashboard inic
 - [x] **Inicialização Next.js Web:** Next.js inicializado em `web/` com App Router.
 - [x] **Route Groups Web:** Estruturados `web/src/app/(marketing)` e `web/src/app/(app)/dashboard` com Root Layout em `web/src/app/layout.tsx`.
 - [x] **KaTeX no Dashboard:** Configurado CSS global do KaTeX e componente `MathCard` com `react-katex` (`InlineMath`/`BlockMath`) para flashcards com LaTeX no Dashboard.
+- [x] **Dashboard alinhado ao Wireframe:** Refatorada a tela `Meus decks` com navegação Synapse, grid de decks mockados (`trigonometria`, `botanica`, `eletromagnetismo`) e prova visual de KaTeX no card de eletromagnetismo.
+- [x] **Tela de Revisão Web:** Criada `web/src/app/(app)/review/[deckId]/page.tsx` com layout vertical, flashcard grande, fluxo `Mostrar Resposta` e os 4 botões oficiais (`errei`, `dificil`, `bom`, `facil`) avançando entre cards mockados.
+- [x] **Cliente HTTP Web:** Criado `web/src/lib/api.ts` com wrapper `fetch` apontando para `http://localhost:8000/api` e TODO para injeção de JWT no Dia 7.
+
+### Dia 7 — 2026-04-28 (Autenticação e Segurança)
+- [x] **Bloco 18 - Backend: validação do contrato JWT:** Finalizados `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/refresh` retornando `{ access, refresh }`, criada rota protegida `GET /api/auth/me` com `AsyncJWTAuth`, e atualizados testes do fluxo completo de auth.
 
 ## 🟡 Em andamento
-- Dia 6 finalizado. Próxima frente: Dia 7 com autenticação Auth0/JWT no App e integração de telas.
+- Dia 7 em andamento. Próxima frente: Bloco 19 com autenticação Web, cookies/JWT e proteção de rotas no Next.js.
 
 ## ⬜ Pendente — próximos dias
-- Dia 7 (29/04): Autenticação Auth0/JWT no App e Integração de Telas.
 - Dia 8 (30/04): Polimento de UI Mobile (Filtros, Animações) e Web.
 - Dia 9 (01/05): Landing Page Institucional.
 - Dia 10 (02/05): Deploy final, E2E e Lançamento.
