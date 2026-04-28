@@ -5,29 +5,32 @@ import { BlockMath, InlineMath } from "react-katex";
 type MathCardProps = {
   front: string;
   back: string;
+  showBack?: boolean;
 };
 
-export default function MathCard({ front, back }: MathCardProps) {
+export default function MathCard({ front, back, showBack = false }: MathCardProps) {
   return (
-    <article className="rounded-lg border border-slate-200 bg-white p-6 text-slate-950 shadow-sm">
-      <div className="space-y-4">
-        <div className="border-b border-slate-200 pb-4">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+    <article className="flex min-h-[400px] w-full max-w-3xl items-center justify-center rounded-2xl border border-zinc-800 bg-zinc-900 p-8 text-center shadow-xl shadow-black/30">
+      <div className="w-full space-y-8">
+        <div className="space-y-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
             Frente
           </p>
-          <div className="text-lg font-medium">
+          <div className="text-3xl font-semibold leading-relaxed text-white sm:text-4xl">
             <InlineMath math={front} />
           </div>
         </div>
 
-        <div>
-          <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Verso
-          </p>
-          <div className="overflow-x-auto rounded-md bg-slate-50 px-4 py-5">
-            <BlockMath math={back} />
+        {showBack ? (
+          <div className="border-t border-zinc-800 pt-8">
+            <p className="mb-4 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              Verso
+            </p>
+            <div className="overflow-x-auto rounded-xl bg-zinc-950 px-4 py-6 text-white">
+              <BlockMath math={back} />
+            </div>
           </div>
-        </div>
+        ) : null}
       </div>
     </article>
   );

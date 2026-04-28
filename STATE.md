@@ -6,7 +6,7 @@
 
 **Produto:** Synapse — SRS para estudantes de alta performance
 **Case:** 10 dias (24/04 – 04/05/2026)
-**Última atualização:** 2026-04-28 — Dia 7 iniciado: Bloco 18 concluído com contrato JWT validado, refresh padronizado e rota `/auth/me`.
+**Última atualização:** 2026-04-28 — Dia 7 em andamento: Blocos 18 e 19 concluídos com contrato JWT backend e fundação segura de autenticação Web.
 
 ---
 
@@ -51,9 +51,10 @@ Integrar autenticação JWT entre Backend, Web e Mobile, proteger rotas e conect
 
 ### Dia 7 — 2026-04-28 (Autenticação e Segurança)
 - [x] **Bloco 18 - Backend: validação do contrato JWT:** Finalizados `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/refresh` retornando `{ access, refresh }`, criada rota protegida `GET /api/auth/me` com `AsyncJWTAuth`, e atualizados testes do fluxo completo de auth.
+- [x] **Bloco 19 - Web: fundação de autenticação segura:** Criada tela `/login` em Next.js/Tailwind, BFF com Route Handlers para login/logout, persistência de `access` e `refresh` em cookies `httpOnly`, e `apiFetch` server-side com injeção automática do Bearer JWT.
 
 ## 🟡 Em andamento
-- Dia 7 em andamento. Próxima frente: Bloco 19 com autenticação Web, cookies/JWT e proteção de rotas no Next.js.
+- Dia 7 em andamento. Próxima frente: Bloco 20 com proteção de rotas e integração real das telas Web.
 
 ## ⬜ Pendente — próximos dias
 - Dia 8 (30/04): Polimento de UI Mobile (Filtros, Animações) e Web.

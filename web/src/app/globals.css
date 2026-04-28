@@ -1,15 +1,10 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
-:root {
-  color-scheme: dark;
-}
+/* Importação do KaTeX para as fórmulas matemáticas funcionarem */
+@import "katex/dist/katex.min.css";
 
-* {
-  box-sizing: border-box;
-}
-
+/* Estilo global escuro do Synapse */
 body {
-  margin: 0;
+  background-color: #09090b; /* bg-zinc-950 */
+  color: #fafafa; /* text-zinc-50 */
 }
