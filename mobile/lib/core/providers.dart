@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:synapse_mobile/core/api/api_client.dart';
 import 'package:synapse_mobile/core/db/database.dart';
 import 'package:synapse_mobile/features/auth/auth_controller.dart';
 import 'package:synapse_mobile/features/auth/auth_repository.dart';
@@ -28,31 +29,13 @@ final secureStorageProvider = Provider<FlutterSecureStorage>((ref) {
 
 final dioProvider = Provider<Dio>((ref) {
   final secureStorage = ref.watch(secureStorageProvider);
-  final dio = Dio(
-    BaseOptions(
-      baseUrl: _defaultBaseUrl,
-      connectTimeout: const Duration(seconds: 10),
-      receiveTimeout: const Duration(seconds: 20),
-      sendTimeout: const Duration(seconds: 20),
-      contentType: Headers.jsonContentType,
-      responseType: ResponseType.json,
-    ),
+  final apiClient = ApiClient(
+    baseUrl: _defaultBaseUrl,
+    secureStorage: secureStorage,
+    forceLogout: () => ref.read(authControllerProvider.notifier).logout(),
   );
 
-  dio.interceptors.add(
-    InterceptorsWrapper(
-      onRequest: (options, handler) async {
-        options.headers.putIfAbsent('Accept', () => Headers.jsonContentType);
-        final token = await secureStorage.read(key: accessTokenStorageKey);
-        if (token != null && token.isNotEmpty) {
-          options.headers['Authorization'] = 'Bearer $token';
-        }
-        handler.next(options);
-      },
-    ),
-  );
-
-  return dio;
+  return apiClient.dio;
 });
 
 final authRepositoryProvider = Provider<AuthRepository>((ref) {

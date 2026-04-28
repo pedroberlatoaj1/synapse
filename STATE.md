@@ -6,13 +6,13 @@
 
 **Produto:** Synapse — SRS para estudantes de alta performance
 **Case:** 10 dias (24/04 – 04/05/2026)
-**Última atualização:** 2026-04-28 — Dia 7 em andamento: Blocos 18, 19, 20 e 21 concluídos com JWT backend, auth Web segura, rotas protegidas, telas Web integradas e autenticação Mobile com storage seguro.
+**Última atualização:** 2026-04-28 — Dia 7 concluído: Blocos 18 a 22 finalizados com JWT backend, auth Web segura, rotas protegidas, telas Web integradas, auth Mobile e refresh automático no Dio.
 
 ---
 
 ## 📍 Dia corrente: **Dia 7 — Autenticação e Segurança**
 
-### Status: 🟡 Dia 7 em andamento
+### Status: ✅ Dia 7 concluído
 
 ### Objetivo do dia
 Integrar autenticação JWT entre Backend, Web e Mobile, proteger rotas e conectar telas ao fluxo autenticado.
@@ -54,9 +54,10 @@ Integrar autenticação JWT entre Backend, Web e Mobile, proteger rotas e conect
 - [x] **Bloco 19 - Web: fundação de autenticação segura:** Criada tela `/login` em Next.js/Tailwind, BFF com Route Handlers para login/logout, persistência de `access` e `refresh` em cookies `httpOnly`, e `apiFetch` server-side com injeção automática do Bearer JWT.
 - [x] **Bloco 20 - Web: proteção e integração de telas:** Criado middleware protegendo `/dashboard` e `/review`, Dashboard convertido para Server Component consumindo `GET /api/decks`, sessão de revisão integrada à fila real `GET /api/reviews/queue` e submissão SM-2 via BFF `POST /api/reviews`.
 - [x] **Bloco 21 - Mobile: fluxo de autenticação e storage seguro:** Criados `AuthRepository`, `AuthController`, `LoginScreen` e `AuthGate`, tokens padronizados em `synapse_access_token`/`synapse_refresh_token` no `FlutterSecureStorage`, Dio lendo o access token padrão, e logout limpando tokens + tabelas Drift (`SyncEvents`, `LocalCards`, `LocalDecks`) para evitar dados fantasmas entre usuários.
+- [x] **Bloco 22 - Mobile: Dio final + integração das telas:** `ApiClient` atualizado com `QueuedInterceptorsWrapper`, refresh token automático em 401, retry da requisição original com novo access token, logout forçado em falha de refresh e sync inicial na `DecksScreen` seguindo Push Pending → Pull Changes sem travar a UI offline.
 
 ## 🟡 Em andamento
-- Dia 7 em andamento. Próxima frente: Bloco 22 com refresh token no Dio, retry automático em 401 e sync inicial pós-login.
+- Dia 7 finalizado. Próxima frente: Dia 8 com polimento de UI Mobile/Web, filtros e animações.
 
 ## ⬜ Pendente — próximos dias
 - Dia 8 (30/04): Polimento de UI Mobile (Filtros, Animações) e Web.

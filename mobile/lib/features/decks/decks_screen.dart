@@ -19,7 +19,20 @@ class DecksScreen extends ConsumerStatefulWidget {
 class _DecksScreenState extends ConsumerState<DecksScreen> {
   bool _isSyncing = false;
 
-  Future<void> _syncNow() async {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _syncNow(showSuccess: false, offlineMessage: true);
+      }
+    });
+  }
+
+  Future<void> _syncNow({
+    bool showSuccess = true,
+    bool offlineMessage = false,
+  }) async {
     if (_isSyncing) {
       return;
     }
@@ -42,15 +55,23 @@ class _DecksScreenState extends ConsumerState<DecksScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Sync concluido.')),
-      );
+      if (showSuccess) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Sync concluido.')),
+        );
+      }
     } catch (error) {
       if (!mounted) {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Falha ao sincronizar: $error')),
+        SnackBar(
+          content: Text(
+            offlineMessage
+                ? 'Modo offline ativo. A sincronizacao sera tentada depois.'
+                : 'Falha ao sincronizar: $error',
+          ),
+        ),
       );
     } finally {
       if (mounted) {
