@@ -2,6 +2,8 @@ import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:synapse_mobile/core/db/database.dart';
+import 'package:synapse_mobile/features/auth/auth_controller.dart';
+import 'package:synapse_mobile/features/auth/auth_repository.dart';
 import 'package:synapse_mobile/features/sync/sync_service.dart';
 
 const _defaultBaseUrl = String.fromEnvironment(
@@ -41,7 +43,7 @@ final dioProvider = Provider<Dio>((ref) {
     InterceptorsWrapper(
       onRequest: (options, handler) async {
         options.headers.putIfAbsent('Accept', () => Headers.jsonContentType);
-        final token = await secureStorage.read(key: 'jwt_token');
+        final token = await secureStorage.read(key: accessTokenStorageKey);
         if (token != null && token.isNotEmpty) {
           options.headers['Authorization'] = 'Bearer $token';
         }
@@ -51,6 +53,23 @@ final dioProvider = Provider<Dio>((ref) {
   );
 
   return dio;
+});
+
+final authRepositoryProvider = Provider<AuthRepository>((ref) {
+  return AuthRepository(
+    dio: ref.watch(dioProvider),
+    secureStorage: ref.watch(secureStorageProvider),
+  );
+});
+
+final authControllerProvider =
+    StateNotifierProvider<AuthController, AuthState>((ref) {
+  final controller = AuthController(
+    authRepository: ref.watch(authRepositoryProvider),
+    database: ref.watch(appDatabaseProvider),
+  );
+  controller.restoreSession();
+  return controller;
 });
 
 final syncServiceProvider = Provider<SyncService>((ref) {
