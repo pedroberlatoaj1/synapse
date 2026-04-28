@@ -6,16 +6,16 @@
 
 **Produto:** Synapse — SRS para estudantes de alta performance
 **Case:** 10 dias (24/04 – 04/05/2026)
-**Última atualização:** 2026-04-28 — Dia 7 concluído: Blocos 18 a 22 finalizados com JWT backend, auth Web segura, rotas protegidas, telas Web integradas, auth Mobile e refresh automático no Dio.
+**Última atualização:** 2026-04-28 — Bloco 23 concluído e Dia 7 fechado: auth JWT auditada de ponta a ponta e riscos documentados para o MVP.
 
 ---
 
-## 📍 Dia corrente: **Dia 7 — Autenticação e Segurança**
+## 📍 Dia corrente: **Dia 8 — Polimento de UI/UX**
 
-### Status: ✅ Dia 7 concluído
+### Status: 🟡 Dia 8 em andamento
 
 ### Objetivo do dia
-Integrar autenticação JWT entre Backend, Web e Mobile, proteger rotas e conectar telas ao fluxo autenticado.
+Polir a experiência Mobile/Web com ajustes visuais, filtros, estados de loading/empty/error e animações leves sem comprometer o fluxo offline-first.
 
 ---
 
@@ -55,9 +55,10 @@ Integrar autenticação JWT entre Backend, Web e Mobile, proteger rotas e conect
 - [x] **Bloco 20 - Web: proteção e integração de telas:** Criado middleware protegendo `/dashboard` e `/review`, Dashboard convertido para Server Component consumindo `GET /api/decks`, sessão de revisão integrada à fila real `GET /api/reviews/queue` e submissão SM-2 via BFF `POST /api/reviews`.
 - [x] **Bloco 21 - Mobile: fluxo de autenticação e storage seguro:** Criados `AuthRepository`, `AuthController`, `LoginScreen` e `AuthGate`, tokens padronizados em `synapse_access_token`/`synapse_refresh_token` no `FlutterSecureStorage`, Dio lendo o access token padrão, e logout limpando tokens + tabelas Drift (`SyncEvents`, `LocalCards`, `LocalDecks`) para evitar dados fantasmas entre usuários.
 - [x] **Bloco 22 - Mobile: Dio final + integração das telas:** `ApiClient` atualizado com `QueuedInterceptorsWrapper`, refresh token automático em 401, retry da requisição original com novo access token, logout forçado em falha de refresh e sync inicial na `DecksScreen` seguindo Push Pending → Pull Changes sem travar a UI offline.
+- [x] **Bloco 23 - Verificação e documentação:** Auditoria teórica do fluxo Auth/Sync concluída. Confirmado desenho ponta a ponta com JWT no Django, BFF seguro no Next.js via cookies `httpOnly`, Mobile com `FlutterSecureStorage`, refresh automático e limpeza do banco local no logout. Riscos aceitos para MVP registrados em Issues / riscos abertos.
 
 ## 🟡 Em andamento
-- Dia 7 finalizado. Próxima frente: Dia 8 com polimento de UI Mobile/Web, filtros e animações.
+- Dia 8 iniciado. Foco atual: polimento de UI/UX Mobile/Web, filtros, estados visuais e animações leves.
 
 ## ⬜ Pendente — próximos dias
 - Dia 8 (30/04): Polimento de UI Mobile (Filtros, Animações) e Web.
@@ -82,3 +83,5 @@ Integrar autenticação JWT entre Backend, Web e Mobile, proteger rotas e conect
 ## ⚠️ Issues / riscos abertos
 - Integração do cliente móvel com a nova API de Sync demandará mapeamento cuidadoso de banco de dados local (ex: Drift no Flutter).
 - A validação mobile final fica a cargo do desenvolvedor: rodar `flutter pub get`, `dart run build_runner build --delete-conflicting-outputs`, `flutter analyze` e os testes Flutter após regenerar os arquivos Drift.
+- **Risco de CORS futuro:** hoje a Web usa BFF/Route Handlers do Next.js e não chama o Django direto do navegador. Se no futuro o frontend Web pular o BFF e chamar a API Django diretamente, será obrigatório configurar `django-cors-headers` de forma estrita, com origens explícitas e sem curingas em produção.
+- **Edge case de refresh expirado no Mobile:** se `synapse_refresh_token` também expirar, o interceptor do Dio fará logout forçado e limpará o banco local Drift. Se o usuário tiver cards/reviews offline ainda não sincronizados, esses dados serão perdidos. Aceito para o MVP, mas deve ser revisitado antes de produção.
